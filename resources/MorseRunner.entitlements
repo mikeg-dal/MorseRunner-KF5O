@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Hardened runtime is mandatory for Developer-ID notarization. We
+        deny JIT and unsigned-executable-memory because the simulator
+        does not generate code at runtime; library-validation stays
+        enabled so the loader rejects unsigned dylibs.
+
+        We do NOT request com.apple.security.app-sandbox in v1. Reasons:
+          - Master.dta lives in Resources/data inside the bundle.
+          - Optional WAV recordings go to ~/Library/Application Support/
+            MorseRunner/ which is reachable without entitlements when
+            the sandbox is off.
+          - The original Delphi build has no sandbox semantics and the
+            port aims for behavioral parity first; sandboxing can be
+            layered on in a future release.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <false/>
+</dict>
+</plist>

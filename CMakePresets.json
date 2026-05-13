@@ -1,0 +1,60 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_OSX_ARCHITECTURES": "arm64",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "arm64-release",
+            "displayName": "Release (arm64)",
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+        },
+        {
+            "name": "arm64-debug",
+            "displayName": "Debug (arm64)",
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "arm64-relwithdebinfo",
+            "displayName": "RelWithDebInfo (arm64)",
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "arm64-debug-tsan",
+            "displayName": "Debug + ThreadSanitizer (arm64)",
+            "inherits": "arm64-debug",
+            "cacheVariables": { "MORSERUNNER_ENABLE_TSAN": "ON" }
+        },
+        {
+            "name": "arm64-debug-asan",
+            "displayName": "Debug + AddressSanitizer (arm64)",
+            "inherits": "arm64-debug",
+            "cacheVariables": { "MORSERUNNER_ENABLE_ASAN": "ON" }
+        }
+    ],
+    "buildPresets": [
+        { "name": "arm64-release",       "configurePreset": "arm64-release" },
+        { "name": "arm64-debug",         "configurePreset": "arm64-debug" },
+        { "name": "arm64-relwithdebinfo","configurePreset": "arm64-relwithdebinfo" },
+        { "name": "arm64-debug-tsan",    "configurePreset": "arm64-debug-tsan" },
+        { "name": "arm64-debug-asan",    "configurePreset": "arm64-debug-asan" }
+    ],
+    "testPresets": [
+        { "name": "arm64-debug",      "configurePreset": "arm64-debug",
+          "output": { "outputOnFailure": true } },
+        { "name": "arm64-debug-tsan", "configurePreset": "arm64-debug-tsan",
+          "output": { "outputOnFailure": true } }
+    ]
+}
