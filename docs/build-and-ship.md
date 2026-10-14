@@ -77,8 +77,12 @@ stapled with a notarization ticket; Gatekeeper accepts it offline.
 ## Iconset regeneration
 
 ```sh
-./scripts/make_iconset.sh path/to/MorseRunner-1024.png
+./scripts/make_iconset.sh resources/icons/MorseRunner.svg   # needs `brew install librsvg`
 ```
+
+`MorseRunner.svg` is the vector master — a macOS-style redraw of the
+original `MorseRun.ico` motif (stopwatch + straight key). A 1024×1024 PNG
+is also accepted and downscaled with `sips`.
 
 Produces `resources/icons/MorseRunner.icns`. The `.iconset` directory is
 kept in source control so designers can iterate on individual sizes

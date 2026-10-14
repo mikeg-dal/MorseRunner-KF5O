@@ -8,14 +8,15 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #
 # Generates resources/icons/MorseRunner.icns from a single high-resolution
-# source PNG (1024x1024). The iconset directory is preserved next to the
+# source: either the vector master (resources/icons/MorseRunner.svg, rendered
+# per size with rsvg-convert so small slots stay crisp) or a 1024x1024 PNG. The iconset directory is preserved next to the
 # .icns so designers can regenerate it without rerunning sips for each size.
 
 set -euo pipefail
 
 SRC="${1:-}"
 if [[ -z "${SRC}" || ! -f "${SRC}" ]]; then
-    echo "usage: $0 path/to/MorseRunner-1024.png" >&2
+    echo "usage: $0 path/to/MorseRunner.svg|MorseRunner-1024.png" >&2
     exit 1
 fi
 
@@ -23,6 +24,8 @@ PORT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ICONSET="${PORT_ROOT}/resources/icons/MorseRunner.iconset"
 ICNS="${PORT_ROOT}/resources/icons/MorseRunner.icns"
 
+# Start clean so stale non-standard slots never leak into the .icns.
+rm -rf "${ICONSET}"
 mkdir -p "${ICONSET}"
 
 # Standard iconset sizes per Apple Human Interface Guidelines. Each non-1x
@@ -42,7 +45,11 @@ names=(
 )
 
 for i in "${!sizes[@]}"; do
-    sips -z "${sizes[i]}" "${sizes[i]}" "${SRC}" --out "${ICONSET}/${names[i]}" >/dev/null
+    if [[ "${SRC}" == *.svg ]]; then
+        rsvg-convert -w "${sizes[i]}" -h "${sizes[i]}" "${SRC}" -o "${ICONSET}/${names[i]}"
+    else
+        sips -z "${sizes[i]}" "${sizes[i]}" "${SRC}" --out "${ICONSET}/${names[i]}" >/dev/null
+    fi
 done
 
 iconutil -c icns "${ICONSET}" -o "${ICNS}"
