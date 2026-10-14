@@ -231,9 +231,14 @@ void RightPanel::buildBandConditionsGroup(QWidget* host) {
     activitySpin_->setRange(kActivityMin, kActivityMax);
     activitySpin_->setValue(3);
     activitySpin_->setAccessibleName(QStringLiteral("Band activity level"));
-    activitySpin_->setAccessibleDescription(QStringLiteral(
-        "Number of DX stations that call after each CQ, from 1 (sparse) "
-        "to 9 (busy contest weekend)"));
+    // Pascal spawns RndPoisson(Activity / 2) callers per CQ, so low
+    // settings often leave a CQ unanswered — say so where it's set.
+    const QString activityHelp = QStringLiteral(
+        "Average callers per CQ ≈ Activity ÷ 2. At 1, most CQs go "
+        "unanswered; use 3–5 for a busy pile-up.");
+    activitySpin_->setToolTip(activityHelp);
+    activityLabel->setToolTip(activityHelp);
+    activitySpin_->setAccessibleDescription(activityHelp);
 }
 
 void RightPanel::buildRunRow(QWidget* host, QMenu* runPopupMenu) {
@@ -248,21 +253,14 @@ void RightPanel::buildRunRow(QWidget* host, QMenu* runPopupMenu) {
     runButton_ = new QToolButton(row);
     runButton_->setGeometry(Geom::kRunButton);
     runButton_->setText(QStringLiteral("   Run   "));
-    // Pascal default: clicking the Run button body starts Pile-Up;
-    // the dropdown arrow opens the menu for choosing a different mode.
-    // MenuButtonPopup gives us the split visual; we wire the body's
-    // clicked signal directly to the first menu action (Pile-Up) so
-    // the button text stays "Run" — setDefaultAction would overwrite
-    // the label with the action's name.
+    // Pascal ToolButton1Click: the button body toggles — Pile-Up when
+    // stopped, Stop while a run is active — and the dropdown arrow
+    // opens the menu for choosing a different mode. MenuButtonPopup
+    // gives us the split visual; MainWindow wires the body's clicked
+    // signal because only it knows whether a run is active.
     runButton_->setPopupMode(QToolButton::MenuButtonPopup);
     if (runPopupMenu != nullptr) {
         runButton_->setMenu(runPopupMenu);
-        const auto acts = runPopupMenu->actions();
-        if (!acts.isEmpty()) {
-            QAction* defaultAction = acts.first();
-            connect(runButton_, &QToolButton::clicked,
-                    defaultAction, &QAction::trigger);
-        }
     }
 
     auto* forLabel = new QLabel(QStringLiteral("for"), row);

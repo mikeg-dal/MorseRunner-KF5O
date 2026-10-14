@@ -115,3 +115,47 @@ TEST(Contest, RequestStopForcesEndOfSession) {
     }
     EXPECT_TRUE(fired);
 }
+
+TEST(Contest, PileUpStartsSilentUntilPlayerCq) {
+    // Pascal parity: starting Pile-Up keys nothing, so no callers
+    // appear until the player sends CQ (F1).
+    auto& rng = mr::core::Random::instance();
+    rng.reseed(1234);
+    Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
+    contest.setRunMode(RunMode::PileUp);
+    EXPECT_NE(contest.player().state(), StationState::Sending);
+    std::vector<float> buf(kBuf, 0.0F);
+    for (int b = 0; b < 500; ++b) {
+        contest.renderNextBlock(buf);
+    }
+    EXPECT_EQ(contest.stations().dxCount(), 0U);
+}
+
+TEST(Contest, PileUpPlayerCqDrawsCallers) {
+    // Once the player's CQ finishes, the Poisson spawn in
+    // onMeFinishedSending should put callers on the band.
+    auto& rng = mr::core::Random::instance();
+    rng.reseed(1234);
+    Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
+    contest.setRunMode(RunMode::PileUp);
+    contest.playerSendMessage(Message::Cq);
+    std::vector<float> buf(kBuf, 0.0F);
+    bool sawCaller = false;
+    for (int b = 0; b < 500 && !sawCaller; ++b) {
+        contest.renderNextBlock(buf);
+        sawCaller = contest.stations().dxCount() > 0;
+    }
+    EXPECT_TRUE(sawCaller);
+}
+
+TEST(Contest, KeysPressedWhileStoppedAreDroppedOnRun) {
+    // F1 in Stop mode must not queue a CQ that fires once Run starts.
+    auto& rng = mr::core::Random::instance();
+    rng.reseed(5);
+    Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
+    contest.setRunMode(RunMode::Stop);
+    contest.playerSendMessage(Message::Cq);
+    contest.playerSendMessage(Message::Cq);
+    contest.setRunMode(RunMode::PileUp);
+    EXPECT_NE(contest.player().state(), StationState::Sending);
+}

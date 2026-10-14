@@ -133,6 +133,7 @@ public slots:
     void onDxQsoCompleted(const QString& call, int rst, int nr, float minute);
 
 private:
+    void setRunning(int mode);  // Sim::RunMode as int; Stop = idle
     // E.G3 live readouts driven from the GUI thread. We don't have a
     // CompletedQso callback yet, so the rate / histogram update on
     // Enter-logged QSOs only — close enough until Phase F's scoring

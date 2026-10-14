@@ -55,7 +55,10 @@
 #include <QMenuBar>
 #include <QObject>
 #include <QStatusBar>
+#include <QToolButton>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace mr::ui {
 
@@ -80,6 +83,15 @@ void addNumericChoices(QMenu* menu, const std::initializer_list<int>& values,
         act->setData(v);
         group->addAction(act);
         QObject::connect(act, &QAction::triggered, receiver, slot);
+    }
+}
+
+// Mirror a panel control's value into its Settings submenu: check the
+// item whose data matches, or clear every check when the control holds
+// a value the menu does not list (e.g. 23 WPM typed into the spin).
+void checkMatchingAction(QMenu* menu, int value) {
+    for (QAction* a : menu->actions()) {
+        a->setChecked(a->data().toInt() == value);
     }
 }
 
@@ -294,7 +306,9 @@ void MainWindow::buildRunMenu() {
 
     menus_->runPileUp = menus_->run->addAction(QStringLiteral("Pile-Up"));
     menus_->runPileUp->setCheckable(true);
-    menus_->runPileUp->setShortcut(QKeySequence(Qt::Key_F8));
+    // Main.dfm also gives Pile-Up F8, colliding with Send > NIL (F8).
+    // NIL is the operating key, so it keeps F8; the Run button body
+    // starts Pile-Up in one click. See docs/parity-checklist.md.
     group->addAction(menus_->runPileUp);
 
     menus_->runSingleCalls = menus_->run->addAction(QStringLiteral("Single Calls"));
@@ -600,6 +614,9 @@ void MainWindow::onContestEnded(int mode) {
     // with a trailing space (matches Pascal's Format directive).
     using mr::sim::RunMode;
     const auto runMode = static_cast<RunMode>(mode);
+
+    // The sim already dropped back to Stop when the duration elapsed.
+    setRunning(static_cast<int>(RunMode::Stop));
 
     // Read MyCall from the right-panel edit so we don't need a sim
     // round-trip to know what the user just submitted as.
@@ -988,7 +1005,7 @@ void MainWindow::wireMenuFanouts() {
             lv->clear();
         }
         emit runModeRequested(mode);
-        menus_->runStop->setEnabled(true);
+        setRunning(mode);
     };
     connect(menus_->runPileUp,      &QAction::triggered, this,
             [enterRunMode]() { enterRunMode(static_cast<int>(RunMode::PileUp)); });
@@ -1004,8 +1021,17 @@ void MainWindow::wireMenuFanouts() {
                 // clock / log so the user can review the just-finished
                 // session. Counters reset only when a new Run starts.
                 emit runModeRequested(static_cast<int>(RunMode::Stop));
-                menus_->runStop->setEnabled(false);
+                setRunning(static_cast<int>(RunMode::Stop));
             });
+
+    // Run button body: Pile-Up when stopped, Stop while running.
+    if (auto* rb = rightPanel_->runButton(); rb != nullptr) {
+        connect(rb, &QToolButton::clicked, this, [this]() {
+            QAction* a = menus_->runStop->isEnabled() ? menus_->runStop
+                                                       : menus_->runPileUp;
+            a->trigger();
+        });
+    }
 
     // Send menu (each F-key) → sendMessageRequested
     static constexpr Message kSendMap[8] = {
@@ -1020,13 +1046,32 @@ void MainWindow::wireMenuFanouts() {
         }
     }
 
-    // Settings → toggled signals
-    connect(menus_->settingsQrn,     &QAction::toggled, this, &MainWindow::qrnToggled);
-    connect(menus_->settingsQrm,     &QAction::toggled, this, &MainWindow::qrmToggled);
-    connect(menus_->settingsQsb,     &QAction::toggled, this, &MainWindow::qsbToggled);
-    connect(menus_->settingsFlutter, &QAction::toggled, this, &MainWindow::flutterToggled);
-    connect(menus_->settingsLids,    &QAction::toggled, this, &MainWindow::lidsToggled);
-    connect(menus_->settingsQsk,     &QAction::toggled, this, &MainWindow::qskToggled);
+    // Settings toggles (QRN/QRM/QSB/Flutter/LIDs/QSK) emit their
+    // *Toggled signals via the checkbox bridge in wireCheckBoxSync —
+    // connecting the actions here as well would emit every change twice.
+}
+
+void MainWindow::setRunning(int mode) {
+    // Pascal: Stop is enabled only during a run, the Run toolbar
+    // button reads "Stop" while a contest is active, and Panel4 shows
+    // the run-mode title (empty when stopped).
+    using mr::sim::RunMode;
+    const auto runMode = static_cast<RunMode>(mode);
+    const bool running = runMode != RunMode::Stop;
+    menus_->runStop->setEnabled(running);
+    if (auto* lbl = bottomPanel_->modeLabel(); lbl != nullptr) {
+        switch (runMode) {
+            case RunMode::PileUp: lbl->setText(QStringLiteral("Pile-Up"));      break;
+            case RunMode::Single: lbl->setText(QStringLiteral("Single Calls")); break;
+            case RunMode::Wpx:    lbl->setText(QStringLiteral("COMPETITION"));  break;
+            case RunMode::Hst:    lbl->setText(QStringLiteral("H S T"));        break;
+            case RunMode::Stop:   lbl->clear();                                 break;
+        }
+    }
+    if (auto* rb = rightPanel_->runButton(); rb != nullptr) {
+        rb->setText(running ? QStringLiteral("  Stop  ")
+                            : QStringLiteral("   Run   "));
+    }
 }
 
 void MainWindow::wireBottomPanelClicks() {
@@ -1065,99 +1110,71 @@ void MainWindow::wireCheckBoxSync() {
 }
 
 void MainWindow::wireNumericSettings() {
-    // Right-panel SpinBoxes drive the wpmChanged / activityChanged /
-    // durationChanged signals; the matching Settings submenu items
-    // also emit the same signal and update the spin so the two views
-    // stay in sync. Pitch + Bandwidth go through QComboBox::activated
-    // (sends the data-payload Hz value).
+    // The right-panel controls are the single source of truth. Each
+    // drives its *Changed signal; the matching Settings submenu sets
+    // the control (so the change flows through that same signal) and
+    // mirrors the control's value back as a check mark.
     auto* rp = rightPanel_;
 
-    // WPM (SpinEdit1 + Settings > CW Speed)
-    connect(rp->wpmSpin(),
-            QOverload<int>::of(&QSpinBox::valueChanged),
-            this, &MainWindow::wpmChanged);
-    for (QAction* a : menus_->cwSpeedMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int wpm = a->data().toInt();
-            QSignalBlocker b(rp->wpmSpin());
-            rp->wpmSpin()->setValue(wpm);
-            emit wpmChanged(wpm);
-        });
-    }
+    // Spin-backed settings: WPM (SpinEdit1), Activity (SpinEdit3),
+    // Duration (SpinEdit2).
+    auto wireSpin = [this](QSpinBox* spin, QMenu* menu,
+                           void (MainWindow::*changed)(int)) {
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, changed);
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
+                menu, [menu](int v) { checkMatchingAction(menu, v); });
+        for (QAction* a : menu->actions()) {
+            connect(a, &QAction::triggered, spin,
+                    [a, spin]() { spin->setValue(a->data().toInt()); });
+        }
+        checkMatchingAction(menu, spin->value());
+    };
+    wireSpin(rp->wpmSpin(),      menus_->cwSpeedMenu,  &MainWindow::wpmChanged);
+    wireSpin(rp->activitySpin(), menus_->activityMenu, &MainWindow::activityChanged);
+    wireSpin(rp->durationSpin(), menus_->durationMenu, &MainWindow::durationChanged);
 
-    // Pitch (ComboBox1 + Settings > CW Pitch)
-    connect(rp->pitchCombo(),
-            QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, rp](int /*idx*/) {
-                emit pitchChanged(rp->pitchCombo()->currentData().toInt());
+    // Combo-backed settings: Pitch (ComboBox1), RX Bandwidth
+    // (ComboBox2). Item data carries the bare Hz value.
+    auto wireCombo = [this](QComboBox* combo, QMenu* menu,
+                            void (MainWindow::*changed)(int)) {
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this, combo, menu, changed](int /*idx*/) {
+                    const int hz = combo->currentData().toInt();
+                    checkMatchingAction(menu, hz);
+                    emit (this->*changed)(hz);
+                });
+        for (QAction* a : menu->actions()) {
+            connect(a, &QAction::triggered, combo, [a, combo]() {
+                if (const int i = combo->findData(a->data()); i >= 0) {
+                    combo->setCurrentIndex(i);
+                }
             });
-    for (QAction* a : menus_->cwPitchMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int hz = a->data().toInt();
-            const int idx = rp->pitchCombo()->findData(hz);
-            QSignalBlocker b(rp->pitchCombo());
-            if (idx >= 0) {
-                rp->pitchCombo()->setCurrentIndex(idx);
-            }
-            emit pitchChanged(hz);
-        });
-    }
-
-    // Bandwidth (ComboBox2 + Settings > CW Bandwidth)
-    connect(rp->bandwidthCombo(),
-            QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, rp](int /*idx*/) {
-                emit bandwidthChanged(rp->bandwidthCombo()->currentData().toInt());
-            });
-    for (QAction* a : menus_->cwBandwidthMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int hz = a->data().toInt();
-            const int idx = rp->bandwidthCombo()->findData(hz);
-            QSignalBlocker b(rp->bandwidthCombo());
-            if (idx >= 0) {
-                rp->bandwidthCombo()->setCurrentIndex(idx);
-            }
-            emit bandwidthChanged(hz);
-        });
-    }
-
-    // Activity (SpinEdit3 + Settings > Activity)
-    connect(rp->activitySpin(),
-            QOverload<int>::of(&QSpinBox::valueChanged),
-            this, &MainWindow::activityChanged);
-    for (QAction* a : menus_->activityMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int v = a->data().toInt();
-            QSignalBlocker b(rp->activitySpin());
-            rp->activitySpin()->setValue(v);
-            emit activityChanged(v);
-        });
-    }
-
-    // Duration (SpinEdit2 + Settings > Duration)
-    connect(rp->durationSpin(),
-            QOverload<int>::of(&QSpinBox::valueChanged),
-            this, &MainWindow::durationChanged);
-    for (QAction* a : menus_->durationMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int v = a->data().toInt();
-            QSignalBlocker b(rp->durationSpin());
-            rp->durationSpin()->setValue(v);
-            emit durationChanged(v);
-        });
-    }
+        }
+        checkMatchingAction(menu, combo->currentData().toInt());
+    };
+    wireCombo(rp->pitchCombo(),     menus_->cwPitchMenu,     &MainWindow::pitchChanged);
+    wireCombo(rp->bandwidthCombo(), menus_->cwBandwidthMenu, &MainWindow::bandwidthChanged);
 
     // Monitor level (VolumeSlider1). Pascal Mon. Level menu items map
     // discrete dB values; we apply via the slider's setDb() so the
-    // visual knob jumps and the slider's own change signal fires.
+    // visual knob jumps and the slider's own change signal fires. The
+    // slider is continuous, so the check mark only appears when it
+    // sits on one of the listed steps.
     if (auto* vs = rp->volumeSlider(); vs != nullptr) {
+        auto syncMonLevel = [this, vs]() {
+            checkMatchingAction(menus_->monLevelMenu,
+                                static_cast<int>(std::lround(vs->db())));
+        };
         connect(vs, &VolumeSlider::valueChanged,
                 this, &MainWindow::monitorLevelChanged);
+        connect(vs, &VolumeSlider::valueChanged, this, syncMonLevel);
         for (QAction* a : menus_->monLevelMenu->actions()) {
             connect(a, &QAction::triggered, this, [a, vs]() {
                 vs->setDb(static_cast<double>(a->data().toInt()));
             });
         }
+        syncMonLevel();
     }
 
     // MyCall (Edit4). Pascal: ecUpperCase + 12 chars; the RightPanel

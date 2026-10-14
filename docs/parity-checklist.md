@@ -39,7 +39,7 @@ Status legend: ◯ pending, ◔ in progress, ● done, ◑ accepted platform del
 | Control | Expected | Status |
 |---|---|---|
 | SpinEdit2 (Duration) | range 1..240, default 30 | ◯ |
-| ToolBar1 / ToolButton1 (Run) | dropdown menu with PopupMenu1 items | ◯ |
+| ToolBar1 / ToolButton1 (Run) | dropdown menu with PopupMenu1 items; body toggles Pile-Up ↔ Stop, caption reads "Stop" while running (ToolButton1Click) | ◯ |
 
 ## Bottom panel (Panel1, alBottom 700×119)
 
@@ -50,7 +50,7 @@ Status legend: ◯ pending, ◔ in progress, ● done, ◑ accepted platform del
 | Edit3 (NR) | Bold 16pt, MaxLen 4, [0-9] | ◯ |
 | SpeedButton4..11 | F1..F8 captions, send Tag-mapped messages | ◯ |
 | Panel2 (Clock) | Arial 24pt, black bg, "00:00:00" | ◯ |
-| Panel4 (Mode) | bold red 21pt, "Pile-Up"/"Single Calls"/"COMPETITION"/"H S T" | ◯ |
+| Panel4 (Mode) | bold red, "Pile-Up"/"Single Calls"/"COMPETITION"/"H S T", empty when stopped. Port uses 11 pt; the 21 pt noted earlier does not fit the 26-px panel — unverified against Main.dfm | ◯ |
 | Panel7 (Rate) | "N qso/hr." | ◯ |
 | Panel3 + PaintBox1 (Histogram) | 48 bins × 5 min, clInfoBk bg, clGreen 4-px stride bars | ◯ |
 | Panel8 + Shape2 (RIT) | orange indicator, Width=BW/9, Left=((PW−W)/2)+Rit/9 | ◯ |
@@ -70,9 +70,9 @@ Status legend: ◯ pending, ◔ in progress, ● done, ◑ accepted platform del
 | Menu | Items | Status |
 |---|---|---|
 | File | View Score Table, View Hi-Score web page…, ─, Audio Recording Enabled (toggle), Play Recorded Audio (initially disabled), ─, Exit | ◯ |
-| Run | Pile-Up (F8), Single Calls, WPX Competition, HST Competition (Ctrl+F8), ─, Stop (initially disabled) | ◯ |
+| Run | Pile-Up (Pascal F8 — dropped: collides with Send › NIL F8, which keeps it; Run button body starts Pile-Up), Single Calls, WPX Competition, HST Competition (Ctrl+F8), ─, Stop (initially disabled) | ◯ |
 | Send | CQ (F1), Number (F2), TU (F3), My Call (F4), His Call (F5), QSO B4 (F6), `<?>` (F7), NIL (F8) | ◯ |
-| Settings | Call…, QSK, CW Speed 10..60 step 5, CW Pitch 300..900 step 50, CW Bandwidth 100..600 step 50, Mon Level −60/−40/−20/0/+20 dB, ─, QRN/QRM/QSB/Flutter/LIDS toggles, Activity 1..9, ─, Duration 5/10/15/30/60/90/120, HST Operator… | ◯ |
+| Settings | Call…, QSK, CW Speed 10..60 step 5, CW Pitch 300..900 step 50, CW Bandwidth 100..600 step 50, Mon Level −60/−40/−20/0/+20 dB, ─, QRN/QRM/QSB/Flutter/LIDS toggles, Activity 1..9, ─, Duration 5/10/15/30/60/90/120, HST Operator…; value submenus are exclusive radio groups whose check mark mirrors the right-panel control (no check when the control holds an unlisted value) | ◯ |
 | Help | Web Page…, Readme…, ─, About… | ◯ |
 | PopupMenu1 | Pile-Up (default), Single Calls, WPX Competition, HST Competition, ─, Stop | ◯ |
 

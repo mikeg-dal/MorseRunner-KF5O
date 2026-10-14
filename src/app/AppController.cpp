@@ -184,8 +184,14 @@ void AppController::start() {
         rp->lidsCheckBox()->setChecked(loaded.lids);
         rp->activitySpin()->setValue(loaded.activity);
         rp->durationSpin()->setValue(loaded.durationMinutes);
-        rp->pitchCombo()->setCurrentText(QString::number(loaded.pitchHz));
-        rp->bandwidthCombo()->setCurrentText(QString::number(loaded.bandwidthHz));
+        // Items read "600 Hz" with the bare Hz value as item data, so
+        // match on data — setCurrentText("600") never finds an item.
+        if (const int i = rp->pitchCombo()->findData(loaded.pitchHz); i >= 0) {
+            rp->pitchCombo()->setCurrentIndex(i);
+        }
+        if (const int i = rp->bandwidthCombo()->findData(loaded.bandwidthHz); i >= 0) {
+            rp->bandwidthCombo()->setCurrentIndex(i);
+        }
         if (auto* vs = rp->volumeSlider(); vs != nullptr) {
             vs->setValue(loaded.monitorLevel);
         }

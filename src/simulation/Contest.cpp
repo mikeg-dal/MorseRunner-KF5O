@@ -91,6 +91,13 @@ void Contest::setSettings(const ContestSettings& s) {
 
 void Contest::setRunMode(RunMode mode) {
     settings_.mode = mode;
+
+    // Drop anything the player keyed outside a run. Stop mode renders
+    // no blocks, so F-key presses there would otherwise pile up in
+    // MyStation and all play back-to-back the moment Run starts.
+    me_->abortSend();
+    lastMeState_ = StationState::Listening;
+
     if (mode == RunMode::Stop) {
         // Pascal: TContest.Init clears the station collection and
         // resets the block counter when transitioning out of a run.
@@ -106,16 +113,9 @@ void Contest::setRunMode(RunMode mode) {
     ended_ = false;
     stopRequested_ = false;
 
-    // Auto-CQ so the band has activity to interpret. In the original
-    // Delphi UI the player presses F1 to start; until Phase E wires
-    // F1 → playerSendMessage(Cq) through the GUI, we issue the same
-    // call internally so audible content appears.
-    if (mode == RunMode::PileUp || mode == RunMode::Wpx) {
-        playerSendMessage(Message::Cq);
-    } else if (mode == RunMode::Single || mode == RunMode::Hst) {
-        // Single / HST top up callers from spawnAutoCallers — no
-        // initial CQ keying needed; the FSM autopilot handles it.
-    }
+    // Pascal parity: starting a run keys nothing. In Pile-Up / WPX the
+    // player presses F1 (CQ) to draw callers; Single / HST top up
+    // callers from spawnAutoCallers.
 }
 
 void Contest::playerSendMessage(Message msg) {
@@ -182,6 +182,9 @@ void Contest::onMeFinishedSending() {
             stations_.addCaller(this, callsignSource_->pickCall(rng_));
         }
     }
+    qCDebug(mrSim) << "me finished: cq=" << playerCq << "endedQso=" << playerEndedQso
+                  << "spawned=" << spawnCount << "dxOnBand=" << stations_.dxCount()
+                  << "activity=" << settings_.activity;
     // Broadcast evMeFinished to every station so DxOperators in
     // stCopying interpret the message-set we just keyed.
     for (auto& s : stations_) {
