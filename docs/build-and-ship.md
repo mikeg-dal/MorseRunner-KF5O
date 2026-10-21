@@ -5,8 +5,6 @@
 - macOS 15 or later.
 - Xcode 26 or later (Swift 6.2).
 - xcodegen: `brew install xcodegen`.
-- For regenerating the reference data only: CMake 3.28+, Ninja and Qt 6
-  (`brew install cmake ninja qt`).
 
 ## Build and test
 
@@ -30,18 +28,10 @@ The app's entitlements file is `resources/MorseRunner.entitlements`
 
 ## Reference data
 
-The Swift engine is checked against data produced by the C++ engine in
-`src/`. Regenerate it only when the C++ reference changes:
-
-```sh
-tools/golden/regenerate.sh            # all modules
-tools/golden/regenerate.sh dsp        # one module
-```
-
-The script configures CMake with `-DMORSERUNNER_BUILD_GOLDEN=ON` and
-`-ffp-contract=off` (Swift never fuses multiply-adds), builds the dump
-tools, and writes into `Swift/Sources/MRTestSupport/Fixtures`. It finds
-Qt through `QT_ROOT`, the `build/arm64-release` cache, or Homebrew.
+The engine is checked against frozen data in
+`Swift/Sources/MRTestSupport/Fixtures`, recorded from the earlier C++
+port (git tag `cpp-qt-reference`). To change it deliberately, follow
+`Swift/PORTING.md`.
 
 ## Release
 
@@ -82,20 +72,4 @@ The version comes from `MARKETING_VERSION` in `Swift/project.yml`.
 
 `MorseRunner.svg` is the vector master, a macOS-style redraw of the
 original `MorseRun.ico` (stopwatch and straight key). It produces
-`resources/icons/MorseRunner.icns`, which both apps use.
-
-## The C++/Qt reference port
-
-The C++/Qt app in `src/` can still be built, for comparing behaviour:
-
-```sh
-cmake --preset arm64-release
-cmake --build --preset arm64-release --parallel
-ctest --test-dir build/arm64-release --output-on-failure
-```
-
-Its old distribution scripts (`scripts/build.sh`, `sign_and_notarize.sh`,
-`make_dmg.sh`, `verify_bundle.sh`) apply to that app only. If you ever
-ship it, `sign_and_notarize.sh` must re-sign every Qt plug-in: Qt's
-plug-ins are signed by another team and library validation rejects them
-otherwise.
+`resources/icons/MorseRunner.icns`.

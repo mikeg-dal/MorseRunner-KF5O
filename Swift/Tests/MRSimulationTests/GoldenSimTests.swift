@@ -6,7 +6,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Whole-contest acceptance test against tools/golden/golden_sim.cpp.
+// Whole-contest acceptance test against golden_sim.cpp (tag cpp-qt-reference).
 // Each scenario replays the C++ robot operator's recorded actions and
 // must reproduce the per-block trace (player + every station's state,
 // plus audio statistics) line for line.

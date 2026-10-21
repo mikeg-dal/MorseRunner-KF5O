@@ -7,7 +7,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
 // MRCore.Random must reproduce the C++ mr::core::Random draw for draw
-// (Fixtures/core/random.json, from tools/golden/golden_random.cpp).
+// (Fixtures/core/random.json, from golden_random.cpp, tag cpp-qt-reference).
 
 import Darwin
 @testable import MRCore

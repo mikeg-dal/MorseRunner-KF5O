@@ -7,7 +7,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
 // Boundary cases of MRScoring against Fixtures/scoring/edges.json
-// (tools/golden/golden_scoring.cpp, dumpEdges): every expected value
+// (golden_scoring.cpp dumpEdges, tag cpp-qt-reference): every expected value
 // comes from the C++ implementation. Strings in that file are hex bytes,
 // so results that are not valid UTF-8 (a multibyte character cut by the
 // 5-byte prefix truncation) compare exactly.

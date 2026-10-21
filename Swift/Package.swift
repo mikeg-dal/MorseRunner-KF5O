@@ -40,8 +40,8 @@ let package = Package(
         // keys, Run rules, captions, score files. The AppKit app applies it.
         .target(name: "MRAppCore", dependencies: ["MRCore", "MRScoring", "MRSimulation"]),
 
-        // Reference data dumped from the C++ implementation
-        // (tools/golden); the Swift port must reproduce it.
+        // Frozen reference data dumped from the former C++ implementation
+        // (git tag cpp-qt-reference); the engine must reproduce it.
         .target(name: "MRTestSupport", dependencies: ["MRCore"],
                 resources: [.copy("Fixtures")]),
 

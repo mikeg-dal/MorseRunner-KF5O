@@ -8,7 +8,7 @@
 //
 // Port of tests/scoring/test_call_to_score.cpp and test_extract_prefix.cpp,
 // plus the golden comparison against Fixtures/scoring/prefix.json
-// (tools/golden/golden_scoring.cpp).
+// (golden_scoring.cpp, tag cpp-qt-reference).
 
 import MRDSP
 import MRScoring

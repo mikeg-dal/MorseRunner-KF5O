@@ -7,7 +7,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
 // MRDSP must reproduce the C++ mr::dsp output bit for bit
-// (Fixtures/dsp/, from tools/golden/golden_dsp.cpp). Every comparison is
+// (Fixtures/dsp/, from golden_dsp.cpp, tag cpp-qt-reference). Every comparison is
 // on IEEE-754 bit patterns — stricter than `==` (distinguishes -0/+0).
 
 import MRCore
