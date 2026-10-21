@@ -9,6 +9,7 @@
 #include "simulation/QrmStation.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 #include "core/Random.h"
 #include "simulation/Engine.h"
 
@@ -25,9 +26,9 @@ constexpr float kQrmReloadJitter = 2.0F;
 
 int secondsToBlocks(float seconds, int bufSize) {
     using mr::constants::Audio::kSampleRate;
-    return static_cast<int>(std::lround(
+    return mr::core::delphiRound(
         static_cast<double>(seconds) * static_cast<double>(kSampleRate)
-        / static_cast<double>(bufSize)));
+        / static_cast<double>(bufSize));
 }
 
 }  // namespace
@@ -49,7 +50,7 @@ QrmStation::QrmStation(Engine* engine, std::string randomCall)
     setAmplitude(kQrmAmpBase + kQrmAmpRange * rng.uniform01());
 
     // Pascal: Pitch := Round(RndGaussLim(0, 300)).
-    setPitchHz(static_cast<int>(std::lround(rng.gaussLim(0.0F, kQrmPitchSpreadHz))));
+    setPitchHz(mr::core::delphiRound(rng.gaussLim(0.0F, kQrmPitchSpreadHz)));
 
     // Pascal: Wpm := 30 + Random(20). Sloppy hand-keyer speed range.
     setWpm(kQrmWpmBase + rng.uniformInt(kQrmWpmRange));
@@ -78,8 +79,8 @@ void QrmStation::processEvent(StationEvent event) {
             }
             // Pascal: Timeout := Round(RndGaussLim(SecondsToBlocks(4), 2)).
             const int base = secondsToBlocks(kQrmReloadSeconds, bufSize);
-            setTimeout(static_cast<int>(std::lround(
-                rng.gaussLim(static_cast<float>(base), kQrmReloadJitter))));
+            setTimeout(mr::core::delphiRound(
+                rng.gaussLim(static_cast<float>(base), kQrmReloadJitter)));
             break;
         }
         case StationEvent::Timeout:

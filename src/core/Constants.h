@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 namespace mr::constants {
@@ -88,11 +89,12 @@ namespace Audio {
                                                    int bufSize = kDefaultBufferSamples) noexcept {
         return blocks * static_cast<double>(bufSize) / static_cast<double>(kSampleRate);
     }
-    [[nodiscard]] constexpr int secondsToBlocks(double seconds,
-                                                int bufSize = kDefaultBufferSamples) noexcept {
-        return static_cast<int>(static_cast<double>(kSampleRate) / static_cast<double>(bufSize)
-                                * seconds
-                                + 0.5);
+    // Pascal: SecondsToBlocks := Round(DEFAULTRATE / BufSize * Sec), with
+    // Delphi's round-half-to-even.
+    [[nodiscard]] inline int secondsToBlocks(double seconds,
+                                             int bufSize = kDefaultBufferSamples) noexcept {
+        return static_cast<int>(std::nearbyint(
+            static_cast<double>(kSampleRate) / static_cast<double>(bufSize) * seconds));
     }
 }  // namespace Audio
 

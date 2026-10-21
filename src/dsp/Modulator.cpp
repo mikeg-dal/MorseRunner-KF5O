@@ -9,6 +9,7 @@
 #include "dsp/Modulator.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 
 #include <cmath>
 
@@ -44,8 +45,7 @@ void Modulator::rebuildTable() {
     // so the table fits an integer number of periods exactly. We adopt
     // the same trick (and update carrierFreq_ to the rounded value) so
     // the table never needs wrap-around interpolation.
-    const int cnt = std::max(2, static_cast<int>(
-        std::lround(static_cast<double>(sampleRate_) / static_cast<double>(carrierFreq_))));
+    const int cnt = std::max(2, mr::core::delphiRound(static_cast<double>(sampleRate_) / static_cast<double>(carrierFreq_)));
     carrierFreq_ = static_cast<float>(sampleRate_) / static_cast<float>(cnt);
 
     sn_.assign(static_cast<std::size_t>(cnt), 0.0F);

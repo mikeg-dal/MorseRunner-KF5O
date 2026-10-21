@@ -9,6 +9,7 @@
 #include "simulation/Contest.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 #include "core/Logging.h"
 #include "core/Random.h"
 
@@ -210,9 +211,9 @@ void Contest::configureDspChain() {
     // delay line, which is what we want when bandwidth shifts.
     const float bw = std::max(1.0F, static_cast<float>(settings_.rxBandwidthHz));
     const int points = std::max(1,
-        static_cast<int>(std::lround(
+        mr::core::delphiRound(
             kFilterPointsRatio * static_cast<float>(mr::constants::Audio::kSampleRate)
-            / bw)));
+            / bw));
     const float gainDb = 10.0F * std::log10(kFilterGainRefBw / bw);
     filter_.configure(points, kFilterPasses, bufferSize_, gainDb);
 

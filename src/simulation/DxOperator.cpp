@@ -9,6 +9,7 @@
 #include "simulation/DxOperator.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 #include "core/Random.h"
 #include "simulation/Engine.h"
 #include "simulation/IsMyCall.h"
@@ -25,9 +26,9 @@ namespace {
 [[nodiscard]] int secondsToBlocks(float seconds) {
     using mr::constants::Audio::kDefaultBufferSamples;
     using mr::constants::Audio::kSampleRate;
-    return static_cast<int>(std::lround(
+    return mr::core::delphiRound(
         static_cast<double>(seconds) * static_cast<double>(kSampleRate)
-        / static_cast<double>(kDefaultBufferSamples)));
+        / static_cast<double>(kDefaultBufferSamples));
 }
 
 }  // namespace
@@ -41,8 +42,7 @@ void DxOperator::setState(OperatorState newState) {
     state_ = newState;
     if (newState == OperatorState::NeedQso) {
         // Pascal: Patience := Round(RndRayleigh(4)).
-        patience_ = static_cast<int>(
-            std::lround(engine_->random().rayleigh(kNeedQsoPatienceMean)));
+        patience_ = mr::core::delphiRound(engine_->random().rayleigh(kNeedQsoPatienceMean));
     } else {
         patience_ = kFullPatience;
     }
@@ -67,7 +67,7 @@ int DxOperator::getWpm() {
     const double w = static_cast<double>(engine_->targetWpm())
                      * 0.5
                      * (1.0 + static_cast<double>(engine_->random().uniform01()));
-    return static_cast<int>(std::lround(w));
+    return mr::core::delphiRound(w);
 }
 
 int DxOperator::getNumber() {
@@ -76,7 +76,7 @@ int DxOperator::getNumber() {
     const double n = static_cast<double>(engine_->random().uniform01())
                      * static_cast<double>(engine_->currentMinute())
                      * static_cast<double>(skills_);
-    return 1 + static_cast<int>(std::lround(n));
+    return 1 + mr::core::delphiRound(n);
 }
 
 int DxOperator::getSendDelayBlocks() {
@@ -108,7 +108,7 @@ int DxOperator::getReplyTimeoutBlocks() {
     const float jittered =
         engine_->random().gaussLim(static_cast<float>(blocks),
                                    static_cast<float>(blocks) / 2.0F);
-    return std::max(1, static_cast<int>(std::lround(jittered)));
+    return std::max(1, mr::core::delphiRound(jittered));
 }
 
 void DxOperator::decrementPatience() {

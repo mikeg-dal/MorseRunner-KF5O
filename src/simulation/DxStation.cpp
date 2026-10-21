@@ -9,6 +9,7 @@
 #include "simulation/DxStation.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 #include "core/Random.h"
 #include "simulation/Engine.h"
 
@@ -63,7 +64,7 @@ DxStation::DxStation(Engine* engine, std::string heardCall)
     setAmplitude(kDxAmpBase + kDxAmpSpread * (1.0F + rng.uShaped()));
 
     // Pascal: Pitch := Round(RndGaussLim(0, 300)). Per-station BFO offset.
-    setPitchHz(static_cast<int>(std::lround(rng.gaussLim(0.0F, kDxPitchSpreadHz))));
+    setPitchHz(mr::core::delphiRound(rng.gaussLim(0.0F, kDxPitchSpreadHz)));
 
     // Pascal: TimeOut := NEVER; State := stCopying. The MeFinished event
     // will arrive on the next render tick.
