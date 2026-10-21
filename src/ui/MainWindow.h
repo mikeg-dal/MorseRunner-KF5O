@@ -13,13 +13,11 @@
 #pragma once
 
 #include "core/Constants.h"
+#include "scoring/QsoLog.h"
 
-#include <QHash>
 #include <QMainWindow>
-#include <QSet>
 #include <QString>
 
-#include <array>
 #include <memory>
 
 class QMenu;
@@ -46,12 +44,11 @@ public:
     [[nodiscard]] LogView* logView() const noexcept { return logView_; }
 
 protected:
-    // Pascal Main.dfm KeyPreview=True hands every keystroke to the form
-    // before its focused control. We do the same by overriding the
-    // protected QWidget keyPressEvent — when a shortcut matches we
-    // consume it; otherwise we forward to the base so the QLineEdits
-    // still receive normal typing.
-    void keyPressEvent(QKeyEvent* event) override;
+    // Pascal Main.dfm KeyPreview=True: the form sees every keystroke
+    // before the focused control (FormKeyPress / FormKeyDown). We get
+    // the same by filtering key presses application-wide for widgets in
+    // this window; keys the form doesn't handle pass through untouched.
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 public:
 
@@ -81,7 +78,10 @@ signals:
     // the matching right-panel checkbox so AppController only has to
     // connect once.
     void runModeRequested(int sigRunModeEnum);
-    void sendMessageRequested(int sigMessageEnum);
+    // Pascal FStopPressed (Run button / Stop menu while running).
+    void stopRequested();
+    // Sim::Message as int, plus the Call box text (used for HisCall).
+    void sendMessageRequested(int sigMessageEnum, const QString& callField);
     void qrnToggled(bool on);
     void qrmToggled(bool on);
     void qsbToggled(bool on);
@@ -99,11 +99,12 @@ signals:
     void monitorLevelChanged(double normalisedValue);
     void myCallsignChanged(const QString& call);
     void ritChanged(int hz);
-    // Heard-call (the bottom-panel "Call" QLineEdit, Pascal Edit1).
-    // The user types the call they hear on the air; F5 then keys it.
-    void heardCallsignChanged(const QString& call);
-    // E.G4 Esc — aborts the player's current transmission. Pascal's
-    // FormKeyDown calls Tst.Me.AbortSend.
+    // Pascal Edit1Change: the Call box changed; the sim tries to apply
+    // it to a call being keyed (UpdateCallInMessage).
+    void playerCallEdited(const QString& callField);
+    // Pascal Log.SaveQso's effect on the simulation (DX lookup, NR+1).
+    void qsoLogged(const QString& call);
+    // Esc — Pascal FormKeyPress #27 → Tst.Me.AbortSend.
     void abortSendRequested();
     // Pascal File → Audio Recording Enabled. `path` is the resolved
     // destination — MainWindow derives it on the GUI thread to avoid
@@ -115,60 +116,71 @@ public:
     // operator name. AppController calls this on startup with the
     // loaded value; the HST Operator… menu calls it after a new entry.
     void applyHamNameToTitle(const QString& name);
+    // Pascal Ini.CompDuration: WPX / HST run length in minutes.
+    void setCompetitionDuration(int minutes) { competitionDuration_ = minutes; }
     // AppController.start() reads this on restart to re-apply the
     // persisted Audio Recording Enabled state.
     [[nodiscard]] QAction* audioRecordingAction() const noexcept;
 
 public slots:
-    // Sim → GUI live updates (Phase E.G3). The emitter
-    // (SimulationWorker) lives on the sim thread; Qt delivers via
-    // QueuedConnection across the boundary.
-    void onClockTicked(int seconds);
-    void onContestEnded(int mode);
-    // E.G4 entry-field: Enter on Call/RST/Nr commits the current
-    // QSO to the log pane, clears the fields, and refocuses Call.
-    void onSaveQsoRequested();
-    // Sim-thread reports a DX station reached Done state. Stored here
-    // for Chk-column validation when the user presses Enter.
+    // Sim → GUI (queued from the sim thread).
+    void onClockTicked(double seconds);
+    void onContestEnded(int mode, bool stoppedByUser);
+    // A finished DX station matched the last logged QSO (DataToLastQso).
     void onDxQsoCompleted(const QString& call, int rst, int nr, float minute);
+    // Pascal MainForm.Advance, called when a piece of our message ends.
+    void onPlayerPieceFinished();
+    void onCallEditResult(const QString& callField, bool applied);
+    void onSendAborted(bool hadHisCall, bool hadNr);
 
 private:
     void setRunning(int mode);  // Sim::RunMode as int; Stop = idle
-    // E.G3 live readouts driven from the GUI thread. We don't have a
-    // CompletedQso callback yet, so the rate / histogram update on
-    // Enter-logged QSOs only — close enough until Phase F's scoring
-    // engine takes over.
-    int sessionSeconds_ = 0;
-    int totalLoggedQsos_ = 0;
-    int verifiedQsos_ = 0;
-    int scoreRaw_ = 0;
-    int scoreVerified_ = 0;
-    // Most recent run mode the user selected. Tracked so
-    // onSaveQsoRequested can pick HST-style vs WPX-style scoring
-    // without a sim round-trip. Default is the user's last choice
-    // before Stop; resets to PileUp on cold start.
-    int currentRunMode_ = 1;  // RunMode::PileUp — sentinel only
-    // Logged-prefix tracker for the WPX multiplier column. A given
-    // prefix counts once regardless of how many QSOs we have with it.
-    QSet<QString> rawPrefixes_;
-    QSet<QString> verifiedPrefixes_;
-    // Calls already in the log this session; used for DUP detection
-    // in the Chk column.
-    QSet<QString> loggedCalls_;
-    // Truth back-fill from the sim. Key = uppercased call.
-    struct DxTruth { int rst; int nr; };
-    QHash<QString, DxTruth> truthByCall_;
-    // Mirror of HistogramPanel's bins so onSaveQsoRequested can do a
-    // read-bump-write without exposing internal state on the panel.
-    std::array<int, mr::constants::Ui::kHistogramBins> histogramBins_{};
+
+    // ── Main.pas operating logic ──────────────────────────────────────
+    void sendMsg(int message);          // TMainForm.SendMsg
+    void processSpace();                // TMainForm.ProcessSpace
+    void processEnter(bool forceSave);  // TMainForm.ProcessEnter
+    void wipeBoxes();                   // TMainForm.WipeBoxes
+    void saveQso();                     // Log.SaveQso (GUI side)
+    void incSpeed();                    // TMainForm.IncSpeed
+    void decSpeed();                    // TMainForm.DecSpeed
+    void stepBandwidth(int delta);      // SetBw(ComboBox2.ItemIndex ± 1)
+    void incRit(int step);              // TMainForm.IncRit (-1, 0, +1)
+    void selectCallQuestionMark();      // TMainForm.Edit1Enter
+    // Rewrites the log's last row and the score table from log_.
+    void showLastQso(bool replaceRow);
+    void refreshStats();
+    void refreshRateAndHistogram();
+    [[nodiscard]] bool hstMode() const noexcept;
+
+    // Pascal Log.pas globals CallSent / NrSent and Main.pas MustAdvance.
+    bool callSent_ = false;
+    bool nrSent_ = false;
+    bool mustAdvance_ = false;
+    // UpdateCallInMessage answers arrive asynchronously; answers for
+    // edits made before a HisCall send are stale and skipped.
+    int pendingCallEditResults_ = 0;
+    int ignoredCallEditResults_ = 0;
+    // Pascal Ini.CompDuration (INI-only, 1..60, default 60).
+    int competitionDuration_ = 60;
+
+    mr::scoring::QsoLog log_;
+    double elapsedSeconds_ = 0.0;
+    // Pascal Ini.RunMode (Sim::RunMode as int). Stop = 0.
+    int runMode_ = 0;
+    // Mode of the last run; the log header and score layout follow it
+    // after Stop.
+    int lastRunMode_ = 1;
 
     // Path to the per-user score history file. Pascal stores beside
     // the executable as `MorseRunner.lst`; on macOS we use
     // `~/Library/Application Support/MorseRunner/scores.lst`.
     [[nodiscard]] QString scoreHistoryPath() const;
-    // Append `line` to the score history file, creating it (and the
-    // containing directory) if absent.
-    void appendScoreHistoryLine(const QString& line) const;
+    // Pascal PopupScoreHst writes HstResults.txt beside the .exe; on
+    // macOS it goes next to scores.lst in Application Support.
+    [[nodiscard]] QString hstResultsPath() const;
+    // Append `line` to `path`, creating the file and directory if absent.
+    static void appendLine(const QString& path, const QString& line);
     // Path to the recorded WAV — Pascal saves it next to the .exe;
     // on macOS we use ~/Library/Application Support/MorseRunner/.
     [[nodiscard]] QString recordedAudioPath() const;

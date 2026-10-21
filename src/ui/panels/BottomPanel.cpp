@@ -84,12 +84,14 @@ constexpr FKeyDef kFKeyDefs[8] = {
     {"F8  NIL"},
 };
 
-void applyCompactFont(QWidget* root) {
-    for (auto* w : root->findChildren<QWidget*>()) {
-        QFont f = w->font();
-        f.setPointSize(10);
-        w->setFont(f);
-    }
+// Main.dfm fonts are Font.Height in pixels; a Qt point on macOS is one
+// logical pixel, so the sizes carry over 1:1. MS Sans Serif becomes
+// Helvetica (platform delta); Arial is available on macOS.
+QFont dfmFont(const char* family, int px, bool bold = false) {
+    QFont f(QString::fromLatin1(family));
+    f.setPointSize(px);
+    f.setBold(bold);
+    return f;
 }
 
 }  // namespace
@@ -123,7 +125,9 @@ BottomPanel::BottomPanel(QWidget* parent) : QWidget(parent) {
     buildRitSliderPanel(frame);
     buildScoreTable(frame);
 
-    applyCompactFont(this);
+    // MainForm font: MS Sans Serif, Height -11. Widgets that set their
+    // own font above (entry fields, clock, mode, HST score) keep it.
+    setFont(dfmFont("Helvetica", 11));
 }
 
 void BottomPanel::buildEntryFields(QWidget* host) {
@@ -137,9 +141,8 @@ void BottomPanel::buildEntryFields(QWidget* host) {
     auto* nrLbl   = new QLabel(QStringLiteral("Nr."),  host);
     nrLbl->setGeometry(Geom::kNrLabel);
 
-    QFont boldBig;
-    boldBig.setPointSize(16);
-    boldBig.setBold(true);
+    // Edit1/2/3: MS Sans Serif, Height -16, bold.
+    const QFont boldBig = dfmFont("Helvetica", 16, true);
 
     callEdit_ = new QLineEdit(host);
     callEdit_->setGeometry(Geom::kCallEdit);
@@ -228,17 +231,14 @@ void BottomPanel::buildFunctionKeys(QWidget* host) {
 }
 
 void BottomPanel::buildModePanel(QWidget* host) {
-    // Pascal Panel4: BevelOuter=bvLowered, bold red 11pt. Caption set
-    // by Run mode ("Pile-Up" / "Single Calls" / "COMPETITION" /
-    // "H S T"). Empty in Stop mode.
+    // Pascal Panel4: BevelOuter=bvLowered, MS Sans Serif Height -11,
+    // bold. Caption and colour (green, or red for competitions) are set
+    // by Run(). Empty in Stop mode.
     modeLabel_ = new QLabel(host);
     modeLabel_->setGeometry(Geom::kModePanel);
     modeLabel_->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
     modeLabel_->setAlignment(Qt::AlignCenter);
-    QFont f;
-    f.setBold(true);
-    f.setPointSize(11);
-    modeLabel_->setFont(f);
+    modeLabel_->setFont(dfmFont("Helvetica", 11, true));
     QPalette p = modeLabel_->palette();
     p.setColor(QPalette::WindowText, Qt::red);
     modeLabel_->setPalette(p);
@@ -260,7 +260,7 @@ void BottomPanel::buildRatePanel(QWidget* host) {
 
 void BottomPanel::buildClockPanel(QWidget* host) {
     // Pascal Panel2: BevelOuter=bvLowered, black background, Arial
-    // 24pt dark-gray digital readout.
+    // Height -24 in colour 14151712.
     clockLabel_ = new QLabel(host);
     clockLabel_->setGeometry(Geom::kClockPanel);
     clockLabel_->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
@@ -268,14 +268,10 @@ void BottomPanel::buildClockPanel(QWidget* host) {
     clockLabel_->setAutoFillBackground(true);
     QPalette p = clockLabel_->palette();
     p.setColor(QPalette::Window, Qt::black);
-    // Pascal Panel2 font color = 14151712 (BGR) ≈ #E0D7D7 (RGB).
-    // Bright enough to read on the black ground but slightly muted.
-    p.setColor(QPalette::WindowText, QColor(0xE0, 0xD7, 0xD7));
+    // TColor 14151712 = $00D7F020, stored $00BBGGRR → RGB #20F0D7 (cyan).
+    p.setColor(QPalette::WindowText, QColor(0x20, 0xF0, 0xD7));
     clockLabel_->setPalette(p);
-    QFont f;
-    f.setFamily(QStringLiteral("Helvetica"));
-    f.setPointSize(24);
-    clockLabel_->setFont(f);
+    clockLabel_->setFont(dfmFont("Arial", 24));
     clockLabel_->setText(QStringLiteral("00:00:00"));
     clockLabel_->setAccessibleName(QStringLiteral("Session clock"));
     clockLabel_->setAccessibleDescription(QStringLiteral(
@@ -330,9 +326,22 @@ void BottomPanel::buildScoreTable(QWidget* host) {
     constexpr int kRowH = 22;
     const int colDataW = (frameW - kCol0W) / 2;
 
+    // Panel11's own caption, visible only when the table is hidden (HST).
+    hstScoreLabel_ = new QLabel(QStringLiteral("0"), frame);
+    hstScoreLabel_->setGeometry(1, 1, frameW, frameH);
+    hstScoreLabel_->setAlignment(Qt::AlignCenter);
+    {
+        // Panel11: MS Sans Serif, Height -19, bold.
+        hstScoreLabel_->setFont(dfmFont("Helvetica", 19, true));
+    }
+    hstScoreLabel_->hide();
+
+    scoreGrid_ = new QWidget(frame);
+    scoreGrid_->setGeometry(0, 0, Geom::kHiScoreFrame.width(), Geom::kHiScoreFrame.height());
+
     auto addCell = [&](int row, int col, const QString& text,
                        Qt::Alignment align = Qt::AlignCenter) {
-        auto* lbl = new QLabel(text, frame);
+        auto* lbl = new QLabel(text, scoreGrid_);
         int x = 0;
         int w = 0;
         if (col == 0) {
@@ -361,8 +370,21 @@ void BottomPanel::buildScoreTable(QWidget* host) {
         scoreCells_[r][0] = addCell(r + 1, 1, QStringLiteral("0"));
         scoreCells_[r][1] = addCell(r + 1, 2, QStringLiteral("0"));
     }
-    // QTableWidget removed; Phase-E will hold pointers to individual
-    // cell labels for live updates.
+}
+
+void BottomPanel::setScoreTableVisible(bool visible) {
+    if (scoreGrid_ != nullptr) {
+        scoreGrid_->setVisible(visible);
+    }
+    if (hstScoreLabel_ != nullptr) {
+        hstScoreLabel_->setVisible(!visible);
+    }
+}
+
+void BottomPanel::setHstScore(int score) {
+    if (hstScoreLabel_ != nullptr) {
+        hstScoreLabel_->setText(QString::number(score));
+    }
 }
 
 }  // namespace mr::ui

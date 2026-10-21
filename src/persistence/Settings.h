@@ -25,13 +25,15 @@ namespace mr::persistence {
 // Pascal Ini.pas defaults so a fresh install behaves identically to a
 // fresh original install.
 struct UserSettings {
+    // Pascal FromIni defaults when a key is missing (a fresh install
+    // ships no .ini): Pitch combo index 3 = 450 Hz, BandWidth index 9 =
+    // 550 Hz, Activity 2. These override the form's 600 / 500 / 3.
     QString myCallsign = QStringLiteral("VE3NEA");
     int wpm = 30;
-    int pitchHz = 600;
-    int bandwidthHz = 500;
-    int activity = 3;
+    int pitchHz = 450;
+    int bandwidthHz = 550;
+    int activity = 2;
     int durationMinutes = 30;
-    int ritHz = 0;
     double monitorLevel = 0.75;   // selfMonGain01
 
     bool qsk = true;
@@ -51,6 +53,11 @@ struct UserSettings {
     QString hamName;
     // Pascal SEC_STN/SaveWav. File → Audio Recording Enabled toggle.
     bool saveWav = false;
+    // INI-only keys (no UI in the original either; edit the plist).
+    // SEC_TST/CompetitionDuration: WPX / HST run length, clamped 1..60.
+    int competitionDuration = 60;
+    // SEC_STN/CallsFromKeyer: an external keyer sends the call.
+    bool callsFromKeyer = false;
 };
 
 class Settings {
@@ -69,7 +76,6 @@ public:
     void setBandwidthHz(int v);
     void setActivity(int v);
     void setDurationMinutes(int v);
-    void setRitHz(int v);
     void setMonitorLevel(double v);
 
     void setQsk(bool v);

@@ -9,6 +9,7 @@
 add_library(mr_core STATIC
     Constants.h
     DelphiColor.h
+    DelphiRound.h
     License.h
     Logging.cpp
     Logging.h

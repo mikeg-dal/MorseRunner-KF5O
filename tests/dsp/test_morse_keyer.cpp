@@ -72,3 +72,28 @@ TEST(MorseKeyer, EmptyMessageReturnsEmpty) {
     MorseKeyer k(kSampleRate, 30);
     EXPECT_TRUE(k.renderEnvelope("").empty());
 }
+
+// Delphi Round() rounds exact halves to even. 13230 / WPM is an exact
+// .5 at 12, 28 and 60 WPM; Pascal gets 1102 / 472 / 220 samples per unit.
+TEST(MorseKeyer, SamplesPerUnitUsesDelphiRounding) {
+    EXPECT_EQ(MorseKeyer(kSampleRate, 12).samplesPerUnit(), 1102);
+    EXPECT_EQ(MorseKeyer(kSampleRate, 28).samplesPerUnit(), 472);
+    EXPECT_EQ(MorseKeyer(kSampleRate, 60).samplesPerUnit(), 220);
+}
+
+// Above ~88 WPM a unit is shorter than the 149-sample ramp. Pascal moves
+// its write pointer backwards there and lets the ramps overlap; the port
+// used to run past the end of the buffer (heap overflow under ASan).
+TEST(MorseKeyer, HighSpeedEnvelopeStaysInBounds) {
+    for (int wpm = 85; wpm <= 120; ++wpm) {
+        MorseKeyer k(kSampleRate, wpm);
+        const auto env = k.renderEnvelope("HHHHH 55555 CQ TEST VE3NEA");
+        ASSERT_FALSE(env.empty()) << "wpm " << wpm;
+        const float peak = *std::max_element(env.begin(), env.end());
+        EXPECT_GT(peak, 0.5F) << "wpm " << wpm;
+        for (const float s : env) {
+            ASSERT_GE(s, 0.0F) << "wpm " << wpm;
+            ASSERT_LE(s, 1.0F) << "wpm " << wpm;
+        }
+    }
+}

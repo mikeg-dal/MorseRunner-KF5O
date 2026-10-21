@@ -8,6 +8,8 @@
 
 #include "persistence/Settings.h"
 
+#include <algorithm>
+
 #include <QCoreApplication>
 
 namespace mr::persistence {
@@ -25,7 +27,6 @@ constexpr auto kKeyPitch     = "Station/Pitch";
 constexpr auto kKeyBandwidth = "Station/BandWidth";
 constexpr auto kKeyQsk       = "Station/Qsk";
 constexpr auto kKeyMonitor   = "Station/SelfMonVolume";
-constexpr auto kKeyRit       = "Station/Rit";
 
 constexpr auto kKeyActivity = "Band/Activity";
 constexpr auto kKeyQrn      = "Band/Qrn";
@@ -38,6 +39,8 @@ constexpr auto kKeyDuration = "Contest/Duration";
 constexpr auto kKeyHiScore  = "Contest/HiScore";
 constexpr auto kKeyHamName  = "Station/Name";
 constexpr auto kKeySaveWav  = "Station/SaveWav";
+constexpr auto kKeyCompDuration   = "Contest/CompetitionDuration";
+constexpr auto kKeyCallsFromKeyer = "Station/CallsFromKeyer";
 
 }  // namespace
 
@@ -55,7 +58,6 @@ UserSettings Settings::load() const {
     s.bandwidthHz      = store_->value(kKeyBandwidth, s.bandwidthHz).toInt();
     s.activity         = store_->value(kKeyActivity,  s.activity).toInt();
     s.durationMinutes  = store_->value(kKeyDuration,  s.durationMinutes).toInt();
-    s.ritHz            = store_->value(kKeyRit,       s.ritHz).toInt();
     s.monitorLevel     = store_->value(kKeyMonitor,   s.monitorLevel).toDouble();
     s.qsk              = store_->value(kKeyQsk,       s.qsk).toBool();
     s.qrn              = store_->value(kKeyQrn,       s.qrn).toBool();
@@ -66,6 +68,11 @@ UserSettings Settings::load() const {
     s.hiScore          = store_->value(kKeyHiScore,   s.hiScore).toInt();
     s.hamName          = store_->value(kKeyHamName,   s.hamName).toString();
     s.saveWav          = store_->value(kKeySaveWav,   s.saveWav).toBool();
+    // Pascal: Wpm := Max(10, Min(120, Wpm)); CompDuration clamped 1..60.
+    s.wpm = std::clamp(s.wpm, 10, 120);
+    s.competitionDuration = std::clamp(
+        store_->value(kKeyCompDuration, s.competitionDuration).toInt(), 1, 60);
+    s.callsFromKeyer = store_->value(kKeyCallsFromKeyer, s.callsFromKeyer).toBool();
     return s;
 }
 
@@ -75,7 +82,6 @@ void Settings::setPitchHz(int v)               { store_->setValue(kKeyPitch, v);
 void Settings::setBandwidthHz(int v)           { store_->setValue(kKeyBandwidth, v); store_->sync(); }
 void Settings::setActivity(int v)              { store_->setValue(kKeyActivity, v);  store_->sync(); }
 void Settings::setDurationMinutes(int v)       { store_->setValue(kKeyDuration, v);  store_->sync(); }
-void Settings::setRitHz(int v)                 { store_->setValue(kKeyRit, v);       store_->sync(); }
 void Settings::setMonitorLevel(double v)       { store_->setValue(kKeyMonitor, v);   store_->sync(); }
 void Settings::setQsk(bool v)                  { store_->setValue(kKeyQsk, v);       store_->sync(); }
 void Settings::setQrn(bool v)                  { store_->setValue(kKeyQrn, v);       store_->sync(); }

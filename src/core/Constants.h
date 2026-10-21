@@ -140,13 +140,14 @@ namespace Dsp {
 
     // Morse key ramp: 5 ms Blackman-Harris attack/decay to suppress audible
     // key clicks. Pascal: VCL/MorseKey.pas `RiseTime := 0.005`.
-    inline constexpr float kRiseTimeSeconds = 0.005f;
-    inline constexpr float kBlackmanHarrisStretch = 2.7f;
+    inline constexpr double kRiseTimeSeconds = 0.005;
+    inline constexpr double kBlackmanHarrisStretch = 2.7;
 
     // Morse keying timing: at WPM = 30 and SR = 11025, one unit = 441 samples.
     // Formula `SamplesInUnit = round(0.1 · SR · 12 / WPM)`. Pascal:
-    // VCL/MorseKey.pas::GetEnvelope.
-    inline constexpr float kMorseUnitSecondsCoef = 0.1f;
+    // VCL/MorseKey.pas::GetEnvelope. Kept in double: 0.1f is slightly
+    // above 0.1 and turns the exact tie at 12 WPM (1102.5) into 1103.
+    inline constexpr double kMorseUnitSecondsCoef = 0.1;
     inline constexpr int kMorseUnitsPerWpmRef = 12;
 
     // Blackman-Harris coefficients (4-term). Apple Vector DSP does not ship

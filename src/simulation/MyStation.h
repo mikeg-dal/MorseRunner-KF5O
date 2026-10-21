@@ -23,6 +23,7 @@
 #include "simulation/Station.h"
 
 #include <deque>
+#include <functional>
 #include <string>
 
 namespace mr::sim {
@@ -37,6 +38,11 @@ public:
     // "Garbage" so DX stations interpret the partial transmission as
     // unintelligible rather than as a usable phrase.
     void abortSend();
+
+    // Overwrite the "last message I sent" set. Pascal Contest.GetAudio
+    // does `Me.Msg := [msgCQ]` before handing a fresh Single Calls / HST
+    // caller an evMeFinished, so the caller acts as if it heard a CQ.
+    void setMsg(const MessageSet& m) noexcept { msg_ = m; }
 
     // Override to split incoming templates around `<his>` and queue
     // the pieces. Each piece becomes a separate small render so the
@@ -53,12 +59,19 @@ public:
     // can swap the envelope). Pascal: TMyStation.UpdateCallInMessage.
     bool updateCallInMessage(const std::string& newCall);
 
-    // Phase-C diagnostic accessor; remove once Contest's tickAndSweep
-    // is verified.
     [[nodiscard]] std::size_t pieceCount() const noexcept { return pieces_.size(); }
+
+    // Fired from getBlock each time a piece finishes keying. Pascal
+    // TMyStation.GetBlock calls MainForm.Advance at that point (moves
+    // the cursor to the exchange field after the call goes out).
+    void setPieceFinishedCallback(std::function<void()> cb) {
+        pieceFinished_ = std::move(cb);
+    }
 
 private:
     void sendNextPiece();
+
+    std::function<void()> pieceFinished_;
 
     // FIFO of pending pieces. "@" is the sentinel for "his callsign"
     // — at render time it expands to the current `hisCall()`.

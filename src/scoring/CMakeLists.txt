@@ -13,6 +13,8 @@ add_library(mr_scoring STATIC
     Crc32.h
     ExtractPrefix.cpp
     ExtractPrefix.h
+    QsoLog.cpp
+    QsoLog.h
 )
 target_include_directories(mr_scoring PUBLIC ${CMAKE_SOURCE_DIR}/src)
 # mr_dsp gives us mr::dsp::encodeMessage which CallToScore consumes.

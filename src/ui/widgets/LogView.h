@@ -40,6 +40,9 @@ public:
     // Scoring::ScoreFormatter and passes the 3-char error tag
     // separately so the colored span lands on the right characters.
     void appendQsoRow(const QString& row, const QString& errorTag);
+    // Pascal Contest.GetAudio re-check: delete the last line and write
+    // it again (RichEdit1.Lines.Delete(Count-1); LastQsoToScreen).
+    void replaceLastQsoRow(const QString& row);
 
     void clear();
 };

@@ -86,9 +86,10 @@ TEST(Contest, EndOfSessionFiresAtDurationLimit) {
     contest.setRunMode(RunMode::PileUp);
 
     bool fired = false;
-    contest.setEndOfSessionCallback([&](RunMode m) {
+    contest.setEndOfSessionCallback([&](RunMode m, bool byUser) {
         fired = true;
         EXPECT_EQ(m, RunMode::PileUp);
+        EXPECT_FALSE(byUser);
     });
 
     std::vector<float> buf(kBuf, 0.0F);
@@ -107,7 +108,10 @@ TEST(Contest, RequestStopForcesEndOfSession) {
     Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
     contest.setRunMode(RunMode::PileUp);
     bool fired = false;
-    contest.setEndOfSessionCallback([&](RunMode) { fired = true; });
+    contest.setEndOfSessionCallback([&](RunMode, bool byUser) {
+        fired = true;
+        EXPECT_TRUE(byUser);  // Pascal FStopPressed
+    });
     contest.requestStop();
     std::vector<float> buf(kBuf, 0.0F);
     for (int b = 0; b < 12 && !fired; ++b) {
@@ -158,4 +162,110 @@ TEST(Contest, KeysPressedWhileStoppedAreDroppedOnRun) {
     contest.playerSendMessage(Message::Cq);
     contest.setRunMode(RunMode::PileUp);
     EXPECT_NE(contest.player().state(), StationState::Sending);
+}
+
+namespace {
+
+// True if any DX caller is transmitting within `blocks` blocks.
+bool aDxCallsWithin(Contest& contest, int blocks) {
+    std::vector<float> buf(kBuf, 0.0F);
+    for (int b = 0; b < blocks; ++b) {
+        contest.renderNextBlock(buf);
+        for (auto& s : contest.stations()) {
+            if (dynamic_cast<DxStation*>(s.get()) != nullptr
+                && s->state() == StationState::Sending) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+// Pascal Contest.GetAudio hands each auto-spawned Single Calls / HST
+// caller an evMeFinished (with Me.Msg = [msgCQ]) so it calls on its own.
+// The player never presses a key in these tests.
+TEST(Contest, SingleCallsCallerCallsWithoutPlayerInput) {
+    auto& rng = mr::core::Random::instance();
+    rng.reseed(7);
+    Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
+    contest.setRunMode(RunMode::Single);
+    // ~10 s of audio; GetSendDelay is well under that.
+    EXPECT_TRUE(aDxCallsWithin(contest, 220));
+}
+
+TEST(Contest, HstCallersCallWithoutPlayerInput) {
+    auto& rng = mr::core::Random::instance();
+    rng.reseed(8);
+    Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
+    contest.setRunMode(RunMode::Hst);
+    EXPECT_TRUE(aDxCallsWithin(contest, 220));
+}
+
+// Pascal Log.SaveQso ends with Inc(Tst.Me.NR); Run resets it to 1.
+TEST(Contest, SerialNumberAdvancesPerLoggedQso) {
+    auto& rng = mr::core::Random::instance();
+    rng.reseed(21);
+    Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
+    contest.setRunMode(RunMode::PileUp);
+    EXPECT_EQ(contest.player().nr(), 1);
+    contest.qsoLogged("W1AW");
+    contest.qsoLogged("K2ABC");
+    EXPECT_EQ(contest.player().nr(), 3);
+    contest.setRunMode(RunMode::Stop);
+    contest.setRunMode(RunMode::PileUp);
+    EXPECT_EQ(contest.player().nr(), 1);
+}
+
+// Pascal TMainForm.SendMsg: Me.HisCall follows the Call box only when
+// HisCall is sent, and an empty box keeps the previous call.
+TEST(Contest, HisCallIsWhatWasSent) {
+    auto& rng = mr::core::Random::instance();
+    rng.reseed(22);
+    Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
+    contest.setRunMode(RunMode::PileUp);
+    contest.playerSendMessage(Message::HisCall, "w1aw");
+    EXPECT_EQ(contest.heardCallsign(), "W1AW");
+    contest.playerSendMessage(Message::HisCall, "");
+    EXPECT_EQ(contest.heardCallsign(), "W1AW");
+    // While the call is still queued, an edit replaces it
+    // (UpdateCallInMessage: nothing of it has been keyed yet).
+    EXPECT_TRUE(contest.playerEditedCall("K2ABC"));
+    EXPECT_EQ(contest.heardCallsign(), "K2ABC");
+    // Once nothing is being sent, typing does not change what the DX
+    // compares against, and the GUI is told to clear CallSent.
+    (void) contest.playerAbortSend();
+    EXPECT_FALSE(contest.playerEditedCall("N3XYZ"));
+    EXPECT_EQ(contest.heardCallsign(), "K2ABC");
+}
+
+// Pascal TContest.OnMeFinishedSending: TU + MyCall only counts as a CQ
+// once something is in the log (QsoList <> nil).
+TEST(Contest, TuMyCallDrawsCallersOnlyAfterFirstQso) {
+    auto& rng = mr::core::Random::instance();
+    rng.reseed(23);
+    ContestSettings s;
+    s.activity = 9;  // Poisson(4.5): zero callers is very unlikely
+    Contest contest(std::make_unique<HardcodedCallsignSource>(), kBuf, rng);
+    contest.setSettings(s);
+    contest.setRunMode(RunMode::PileUp);
+
+    auto sendTuMyCallAndFinish = [&]() {
+        contest.playerSendMessage(Message::Tu);
+        contest.playerSendMessage(Message::MyCall);
+        std::vector<float> buf(kBuf, 0.0F);
+        for (int b = 0; b < 200 && contest.playerSending(); ++b) {
+            contest.renderNextBlock(buf);
+        }
+        // One more block so the player's MsgSent fires.
+        contest.renderNextBlock(buf);
+    };
+
+    sendTuMyCallAndFinish();
+    EXPECT_EQ(contest.stations().dxCount(), 0U);
+
+    contest.qsoLogged("W1AW");
+    sendTuMyCallAndFinish();
+    EXPECT_GT(contest.stations().dxCount(), 0U);
 }

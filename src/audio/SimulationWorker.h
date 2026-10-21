@@ -53,7 +53,17 @@ public:
 
 public slots:
     void setRunMode(int mode);                    // Sim::RunMode as int
-    void sendPlayerMessage(int message);          // Sim::Message as int
+    // Pascal FStopPressed: the run ends at the end of the next block,
+    // and contestEnded reports stoppedByUser = true.
+    void requestStop();
+    // Sim::Message as int. `callField` is the Call box text; for
+    // HisCall it becomes the call MyStation keys (Pascal SendMsg).
+    void sendPlayerMessage(int message, const QString& callField);
+    // Pascal Edit1Change → UpdateCallInMessage; answers callEditResult.
+    void playerEditedCall(const QString& callField);
+    // Pascal SaveQso's sim side: DX lookup + Inc(Me.NR).
+    void logQso(const QString& call);
+    void setCallsFromKeyer(bool on);
     void setQrn(bool on);
     void setQrm(bool on);
     void setQsb(bool on);
@@ -68,8 +78,7 @@ public slots:
     void setRitHz(int hz);
     void setMonitorLevel(double normalisedValue);
     void setMyCallsign(const QString& call);
-    void setHeardCallsign(const QString& call);
-    // E.G4 Esc: abort the player station's in-flight transmission.
+    // Esc: abort the player's transmission; answers sendAborted.
     void abortSend();
     // Pascal File → Audio Recording Enabled. When `on` is true the
     // sim thread routes every rendered block into MorseRunner.wav.
@@ -82,13 +91,18 @@ signals:
     // any receiver connected with Qt::AutoConnection (the default)
     // will see a QueuedConnection across the boundary. Phase E.G3
     // wires these to MainWindow slots.
-    void clockTicked(int seconds);
-    void rateUpdated(int qsoPerHour);
-    void contestEnded(int mode);
-    // E.G3 QSO truth back-fill. Fired on the sim thread when a
-    // DxStation reaches Done; the GUI uses it to validate the Chk
-    // column and update the score table.
+    // Contest time in seconds (Pascal BlocksToSeconds(BlockNumber)).
+    void clockTicked(double seconds);
+    void contestEnded(int mode, bool stoppedByUser);
+    // A finished DX station matched the last logged QSO: its own call,
+    // RST and NR (Pascal DataToLastQso). The GUI re-checks that entry.
     void dxQsoCompleted(const QString& call, int rst, int nr, float minute);
+    // A piece of the player's message finished keying (MainForm.Advance).
+    void playerPieceFinished();
+    // Result of playerEditedCall for `callField`.
+    void callEditResult(const QString& callField, bool applied);
+    // Me.Msg contents at the moment Esc aborted the send.
+    void sendAborted(bool hadHisCall, bool hadNr);
 
 private slots:
     void renderTick();

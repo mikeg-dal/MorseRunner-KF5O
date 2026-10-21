@@ -109,9 +109,10 @@ void SimulationWorker::onStarted() {
     // Wire end-of-session: Contest reports the mode that just ended;
     // we re-emit on the GUI side for the score dialog. Phase E.G3
     // hooks the receiving slot.
-    contest_->setEndOfSessionCallback([this](mr::sim::RunMode m) {
-        emit contestEnded(static_cast<int>(m));
+    contest_->setEndOfSessionCallback([this](mr::sim::RunMode m, bool byUser) {
+        emit contestEnded(static_cast<int>(m), byUser);
     });
+    contest_->setPlayerPieceFinishedCallback([this]() { emit playerPieceFinished(); });
     contest_->setQsoCompletedCallback(
         [this](const mr::sim::Contest::CompletedQso& q) {
             emit dxQsoCompleted(QString::fromStdString(q.call),
@@ -131,9 +132,9 @@ void SimulationWorker::onStarted() {
         if (!contest_) {
             return;
         }
-        const float minutes = contest_->currentMinute();
-        const int seconds = static_cast<int>(std::lround(minutes * 60.0F));
-        emit clockTicked(seconds);
+        emit clockTicked(mr::constants::Audio::blocksToSeconds(
+            static_cast<double>(contest_->currentBlockIndex()),
+            contest_->bufferSize()));
     });
     uiTimer->start(33);
 }
@@ -193,11 +194,35 @@ void SimulationWorker::setRunMode(int mode) {
     contest_->setRunMode(static_cast<mr::sim::RunMode>(mode));
 }
 
-void SimulationWorker::sendPlayerMessage(int message) {
+void SimulationWorker::requestStop() {
+    if (contest_) {
+        contest_->requestStop();
+    }
+}
+
+void SimulationWorker::sendPlayerMessage(int message, const QString& callField) {
     if (!contest_) {
         return;
     }
-    contest_->playerSendMessage(static_cast<mr::sim::Message>(message));
+    contest_->playerSendMessage(static_cast<mr::sim::Message>(message),
+                                callField.toStdString());
+}
+
+void SimulationWorker::playerEditedCall(const QString& callField) {
+    if (!contest_) {
+        return;
+    }
+    emit callEditResult(callField, contest_->playerEditedCall(callField.toStdString()));
+}
+
+void SimulationWorker::logQso(const QString& call) {
+    if (contest_) {
+        contest_->qsoLogged(call.toStdString());
+    }
+}
+
+void SimulationWorker::setCallsFromKeyer(bool on) {
+    mutateSettings(contest_.get(), [&](auto& s) { s.callsFromKeyer = on; });
 }
 
 void SimulationWorker::setQrn(bool on) {
@@ -248,21 +273,12 @@ void SimulationWorker::setMyCallsign(const QString& call) {
     mutateSettings(contest_.get(), [&](auto& cfg) { cfg.myCallsign = s; });
 }
 
-void SimulationWorker::setHeardCallsign(const QString& call) {
-    // The "Call" entry field. F5 (HisCall) reads it directly; we
-    // store it on the Contest's heardCall_ so MyStation's sendText
-    // substitutes it for <his>.
-    if (!contest_) {
-        return;
-    }
-    contest_->setHeardCall(call.toStdString());
-}
-
 void SimulationWorker::abortSend() {
     if (!contest_) {
         return;
     }
-    contest_->player().abortSend();
+    const auto info = contest_->playerAbortSend();
+    emit sendAborted(info.hadHisCall, info.hadNr);
 }
 
 void SimulationWorker::setAudioRecording(bool on, const QString& path) {

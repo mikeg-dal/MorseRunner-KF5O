@@ -76,6 +76,10 @@ bool DxStation::isFinished() const noexcept {
     return s == OperatorState::Done || s == OperatorState::Failed;
 }
 
+bool DxStation::shouldRemove() const noexcept {
+    return released_ || operator_->state() == OperatorState::Failed;
+}
+
 void DxStation::processEvent(StationEvent event) {
     if (operator_->state() == OperatorState::Done) {
         return;
@@ -83,12 +87,14 @@ void DxStation::processEvent(StationEvent event) {
 
     switch (event) {
         case StationEvent::MsgSent:
-            // We finished sending and started listening. Pascal: if
-            // Tst.Me.State = stSending then TimeOut := NEVER else
-            // TimeOut := Oper.GetReplyTimeout. We approximate by
-            // checking whether the player's last message set is empty
-            // (the engine knows). Conservative: always wait for reply.
-            setTimeout(operator_->getReplyTimeoutBlocks());
+            // We finished sending and started listening. If the player
+            // is already transmitting, wait for them to finish (their
+            // evMeFinished drives us) instead of timing out over them.
+            // Pascal: if Tst.Me.State = stSending then TimeOut := NEVER
+            // else TimeOut := Oper.GetReplyTimeout.
+            setTimeout((engine_ != nullptr && engine_->playerSending())
+                           ? kNeverTimeout
+                           : operator_->getReplyTimeoutBlocks());
             break;
 
         case StationEvent::Timeout: {

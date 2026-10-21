@@ -49,7 +49,7 @@ void StationCollection::sweep() {
         stations_.begin(), stations_.end(),
         [](const std::unique_ptr<Station>& s) -> bool {
             if (auto* dx = dynamic_cast<DxStation*>(s.get()); dx != nullptr) {
-                return dx->isFinished();
+                return dx->shouldRemove();
             }
             if (auto* qrn = dynamic_cast<QrnStation*>(s.get()); qrn != nullptr) {
                 return qrn->isFinished();

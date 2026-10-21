@@ -16,3 +16,4 @@ endfunction()
 
 mr_add_scoring_test(test_call_to_score)
 mr_add_scoring_test(test_extract_prefix)
+mr_add_scoring_test(test_qso_log)

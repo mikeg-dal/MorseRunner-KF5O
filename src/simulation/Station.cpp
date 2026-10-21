@@ -110,24 +110,27 @@ void Station::sendMsg(Message m) {
 void Station::sendText(const std::string& text) {
     using mr::constants::Math::kTwoPi;
 
-    // Substitute `<#>` first — twice, like the Pascal: the second pass
-    // catches `<#>` introduced by the first pass (e.g. message R_Nr2).
-    // We render the NR string once and reuse it because all
-    // occurrences within a single template share the same value.
+    // Pascal TStation.SendText:
+    //   AMsg := StringReplace(AMsg, '<#>', NrAsText, []);              // first, may carry the LID error
+    //   AMsg := StringReplace(AMsg, '<#>', NrAsText, [rfReplaceAll]);  // the rest, one fresh value
+    // so in "R <#> <#>" (R_NR2) only the first copy has the error and
+    // each copy rolls its own cut-number style.
     std::string assembled(text);
-    if (assembled.find("<#>") != std::string::npos) {
-        const std::string nrText = nrAsText(nrWithError_);
-        replaceAll(assembled, "<#>", nrText);
-        // Pascal: NrWithError flag is consumed by nrAsText, so we'd
-        // get the corrected (clean) form on the second pass.
-        replaceAll(assembled, "<#>", nrAsText(false));
+    if (const auto first = assembled.find("<#>"); first != std::string::npos) {
+        assembled.replace(first, 3, nrAsText(nrWithError_));
+        if (assembled.find("<#>") != std::string::npos) {
+            replaceAll(assembled, "<#>", nrAsText(false));
+        }
     }
 
     // `<my>` is the SENDING station's call (always own).
     replaceAll(assembled, "<my>", myCall_);
-    // `<his>` is left as a literal in this base — MyStation overrides
-    // sendText to split around it for mid-keying correction.
-    replaceAll(assembled, "<his>", hisCall_);
+    // Pascal's base SendText leaves `<his>` in place (its substitution is
+    // commented out) and the keyer has no code for '<', 'h', 'i', 's' or
+    // '>', so it keys as nothing: QRM's "<his>  QSY QSY" is heard as
+    // "QSY QSY". MyStation splits around `<his>` itself and never gets
+    // here with the token.
+    replaceAll(assembled, "<his>", "");
 
     if (accumulatedText_.empty()) {
         accumulatedText_ = assembled;

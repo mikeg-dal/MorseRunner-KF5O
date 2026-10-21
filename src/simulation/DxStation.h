@@ -43,9 +43,17 @@ public:
     // garbage-collection loop frees these.
     [[nodiscard]] bool isFinished() const noexcept;
 
+    // Pascal frees a DX station when its operator gives up (osFailed),
+    // or when it is Done *and* its call matches the last logged QSO
+    // (TDxStation.DataToLastQso ends with Free). A Done station that
+    // never matches stays in the list, silent, until the next Run.
+    [[nodiscard]] bool shouldRemove() const noexcept;
+    void release() noexcept { released_ = true; }
+
 private:
     std::unique_ptr<DxOperator> operator_;
     std::unique_ptr<mr::dsp::Qsb> qsb_;
+    bool released_ = false;
 };
 
 }  // namespace mr::sim
