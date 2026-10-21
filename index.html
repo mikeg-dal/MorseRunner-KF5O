@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morse Runner for macOS — CW Contest Simulator</title>
+  <meta name="description" content="Native macOS port of VE3NEA's Morse Runner CW contest simulator, with 1:1 parity with version 1.68 for Windows.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Morse Runner</h1>
+      <p class="tagline">The classic CW contest simulator, now a native Mac app</p>
+    </header>
+
+    <div class="origin-notice">
+      A port of <a href="https://www.dxatlas.com/MorseRunner/" target="_blank" rel="noopener">Morse Runner 1.68</a>
+      for Windows by <strong>Alex Shovkoplyas, VE3NEA</strong> &mdash; same audio, same simulated
+      stations, same scoring, same layout.
+    </div>
+
+    <div class="hero">
+      <img src="images/hero.png" alt="Morse Runner for macOS main window with station settings, band conditions and the log entry area">
+    </div>
+
+    <p class="hero-description">
+      Rebuilt from the original Pascal in Swift and AppKit, aiming for 1:1 parity with Morse Runner
+      1.68 for Windows. Pile-ups, QRM, QSB, flutter and LIDs behave as they always have, and scores
+      are calculated the same way. Every deliberate difference is listed in the
+      <a href="https://github.com/mikeg-dal/MorseRunner-KF5O/blob/main/docs/parity-checklist.md" target="_blank" rel="noopener">parity checklist</a>.
+    </p>
+
+    <div id="loading" class="loading">Loading release info&hellip;</div>
+    <div id="error" class="error" hidden>
+      Couldn't load release info. Get the latest build from
+      <a href="https://github.com/mikeg-dal/MorseRunner-KF5O/releases/latest">GitHub Releases</a>.
+    </div>
+
+    <div id="release-info" hidden>
+      <p class="version-line">
+        <span id="version-badge" class="badge"></span>
+        <span id="release-date" class="date"></span>
+        <a id="release-notes-link" class="release-notes-link" href="#" target="_blank" rel="noopener">Release Notes</a>
+      </p>
+
+      <div class="cards">
+        <a id="card-macos" class="card" href="#">
+          <div class="card-icon">&#63743;</div>
+          <h2>macOS</h2>
+          <p class="filename" id="fn-macos"></p>
+          <p class="filesize" id="sz-macos"></p>
+          <span class="btn">Download</span>
+          <p class="hash" id="hash-macos"></p>
+        </a>
+      </div>
+      <p class="verify">
+        Verify what you downloaded: <code>shasum -a 256 &lt;file&gt;</code> and compare with the hash above.
+      </p>
+    </div>
+
+    <div class="info-panels">
+      <div class="panel">
+        <h3>About</h3>
+        <p>
+          Morse Runner puts you in the operating chair of a CW contest: call CQ, work the
+          pile-up, copy calls and exchanges at speed and see your score. Run it in WPX, single
+          calls, pile-up or HST mode, with QRN, QRM, QSB, flutter and LIDs switchable.
+        </p>
+        <h4>Links</h4>
+        <ul class="link-list">
+          <li><a href="https://github.com/mikeg-dal/MorseRunner-KF5O" target="_blank" rel="noopener">Source on GitHub</a></li>
+          <li><a href="https://www.dxatlas.com/MorseRunner/" target="_blank" rel="noopener">The original Morse Runner by VE3NEA</a></li>
+          <li><a href="https://www.youtube.com/@AI5QK" target="_blank" rel="noopener">YouTube @AI5QK</a></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>Requirements</h3>
+        <table class="req-table">
+          <tbody>
+            <tr>
+              <td class="req-platform">macOS</td>
+              <td>
+                macOS 15 (Sequoia) or later<br>
+                <span class="req-detail">Universal &mdash; Apple Silicon and Intel</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h3>Getting Started</h3>
+        <table class="req-table">
+          <tbody>
+            <tr>
+              <td class="req-platform">macOS</td>
+              <td>
+                Unzip and drag Morse Runner to Applications.<br>
+                <span class="req-detail">Signed and notarized &mdash; no Gatekeeper warnings.</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="dev-section">
+      <h3>Development &amp; Feedback</h3>
+      <p>
+        If something sounds, scores or looks different from Morse Runner on Windows, that's a
+        bug &mdash; please open an issue and say what you expected.
+      </p>
+      <a class="issues-link" href="https://github.com/mikeg-dal/MorseRunner-KF5O/issues" target="_blank" rel="noopener">
+        <span class="issues-icon">&#9679;</span>
+        View Current Open Issues on GitHub
+      </a>
+    </div>
+
+    <footer>
+      <p>&copy; 2025-2026 Mike Garcia &mdash; KF5O &middot; <a href="https://mikeg-dal.github.io/">All apps</a></p>
+      <p>Morse Runner &copy; 2004-2006 Alex Shovkoplyas, VE3NEA. Released under the Mozilla Public License 2.0.</p>
+    </footer>
+  </main>
+
+  <script>
+    // Release info comes straight from the GitHub API, so a new tag shows up here with no edits.
+    (async () => {
+      const loading = document.getElementById('loading');
+      const error = document.getElementById('error');
+      const info = document.getElementById('release-info');
+
+      try {
+        const resp = await fetch('https://api.github.com/repos/mikeg-dal/MorseRunner-KF5O/releases/latest');
+        if (!resp.ok) throw new Error(resp.statusText);
+        const rel = await resp.json();
+        const asset = (rel.assets || []).find(a => /\.(zip|dmg)$/i.test(a.name));
+        if (!asset) throw new Error('No download yet');
+
+        const badge = document.getElementById('version-badge');
+        badge.textContent = rel.tag_name.replace(/-macos$/, '');
+        if (rel.prerelease) badge.classList.add('pre');
+
+        document.getElementById('release-date').textContent = (rel.published_at || '').slice(0, 10);
+        document.getElementById('release-notes-link').href = rel.html_url;
+
+        document.getElementById('card-macos').href = asset.browser_download_url;
+        document.getElementById('fn-macos').textContent = asset.name;
+        document.getElementById('sz-macos').textContent = (asset.size / 1048576).toFixed(1) + 'M';
+        if (asset.digest && asset.digest.startsWith('sha256:')) {
+          const hash = asset.digest.slice(7);
+          const hashEl = document.getElementById('hash-macos');
+          hashEl.textContent = 'SHA256: ' + hash;
+          hashEl.title = hash;
+        }
+
+        loading.hidden = true;
+        info.hidden = false;
+      } catch {
+        loading.hidden = true;
+        error.hidden = false;
+      }
+    })();
+  </script>
+</body>
+</html>
