@@ -6,8 +6,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Loads reference data produced by the C++ implementation
-// (tools/golden, see tools/golden/README.md). Float arrays are raw
+// Loads the frozen reference data produced by the former C++
+// implementation (tools/golden at git tag cpp-qt-reference; see
+// Swift/PORTING.md). Float arrays are raw
 // little-endian Float32; structured data is JSON.
 
 import Foundation

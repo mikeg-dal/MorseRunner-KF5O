@@ -19,9 +19,8 @@ layout. Every deliberate difference is listed in
 | Part | What it is |
 |---|---|
 | `Swift/` | **The app.** A Swift package (engine + app logic) and an AppKit app generated with xcodegen. |
-| `src/`, `tests/`, `CMakeLists.txt` | The earlier C++/Qt 6 port. It is kept as the **reference implementation**: the Swift engine is tested sample for sample against it. |
-| `tools/golden/` | Small C++ programs that run the reference engine with fixed seeds and write the data the Swift tests compare against. |
 | `resources/` | `Master.dta` (the original 32,668-call database), icon, entitlements, Readme. |
+| `scripts/` | `release_swift.sh` (build, sign, notarize, zip) and `make_iconset.sh`. |
 | `docs/` | Parity checklist, architecture, build and release notes, Pascal cross-references. |
 
 The Swift package is split into modules that mirror the original Pascal
@@ -42,7 +41,7 @@ Swift/
 │   ├── MRPersistence/       settings (UserDefaults, same keys as Ini.pas)
 │   ├── MRAppCore/           UI-independent app logic: keys, Enter-sends-message,
 │   │                        Run rules, captions, end-of-contest scoring, score files
-│   └── MRTestSupport/       reference data from tools/golden
+│   └── MRTestSupport/       frozen reference data the engine must reproduce
 └── Tests/                   one test target per module
 ```
 
@@ -65,9 +64,11 @@ open .build-app/Build/Products/Debug/MorseRunner.app
 xcodebuild -project MorseRunner.xcodeproj -scheme MorseRunner -derivedDataPath .build-app test
 ```
 
-The reference data in `Swift/Sources/MRTestSupport/Fixtures` is generated
-from the C++ engine; regenerating it needs CMake and Qt 6 (see
-[`docs/build-and-ship.md`](docs/build-and-ship.md)).
+The engine is checked sample for sample against frozen reference data in
+`Swift/Sources/MRTestSupport/Fixtures`, recorded from an earlier C++ port
+of the same Pascal code. That C++/Qt port is no longer in the tree; it is
+preserved at the git tag `cpp-qt-reference`. See
+[`Swift/PORTING.md`](Swift/PORTING.md).
 
 ## Release
 

@@ -6,7 +6,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// MRPersistence.Settings against src/persistence/Settings.cpp. Every test
+// MRPersistence.Settings against the C++ src/persistence/Settings.cpp (tag cpp-qt-reference). Every test
 // uses its own throwaway UserDefaults suite, never the real
 // com.garciamike1.MorseRunner domain.
 

@@ -11,7 +11,7 @@
 // distribution helpers the original's RndFunc.pas provides. Every draw
 // consumes the generator exactly as the C++ does, so a given seed gives
 // the same contest in both implementations (verified against
-// tools/golden reference data).
+// the frozen reference data in MRTestSupport).
 //
 // Not thread-safe: the simulation thread owns it.
 

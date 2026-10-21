@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Morse Runner — macOS Qt 6 port
+# Morse Runner — native Swift port
 # Copyright (C) 2004-2006 Alex Shovkoplyas, VE3NEA (original Delphi)
 # Copyright (C) 2026 Mike Garcia, KF5O (macOS port)
 #
