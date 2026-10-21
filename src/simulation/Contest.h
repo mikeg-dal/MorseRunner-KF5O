@@ -69,6 +69,7 @@ struct ContestSettings {
     int activity = 3;
     int durationMinutes = 30;
     float selfMonGain01 = 0.75F;  // VolumeSlider1.Value
+    bool callsFromKeyer = false;  // Ini.CallsFromKeyer (INI-only)
     RunMode mode = RunMode::PileUp;
 };
 
@@ -81,7 +82,15 @@ public:
     [[nodiscard]] int currentBlockIndex() const noexcept override { return blockIndex_; }
     [[nodiscard]] float currentMinute() const noexcept override { return currentMinute_; }
     [[nodiscard]] std::string_view myCallsign() const override { return settings_.myCallsign; }
-    [[nodiscard]] std::string_view heardCallsign() const override { return heardCall_; }
+    [[nodiscard]] std::string_view heardCallsign() const override { return me_->hisCall(); }
+    [[nodiscard]] bool playerSending() const noexcept override {
+        return me_->state() == StationState::Sending;
+    }
+    [[nodiscard]] bool callsFromKeyer() const noexcept override {
+        return settings_.callsFromKeyer;
+    }
+    void onPlayerStartedSending() override { onMeStartedSending(); }
+    void onPlayerFinishedSending() override { onMeFinishedSending(); }
     // Reads directly from MyStation's `msg_` bitset so the timing
     // matches Pascal exactly: the message-set resets when MyStation
     // starts a fresh transmission from idle.
@@ -102,27 +111,22 @@ public:
 
     void setRunMode(RunMode mode);
 
-    // Player input.
-    void setHeardCall(std::string call) {
-        // IsMyCall is case-sensitive (Pascal IsMyCall uses raw char
-        // compares); the Pascal UI relies on ecUpperCase to keep both
-        // sides aligned. Defensively uppercase here so non-UI callers
-        // (tests, future hotkeys) can't trip the mismatch path.
-        for (char& c : call) {
-            if (c >= 'a' && c <= 'z') {
-                c = static_cast<char>(c - 'a' + 'A');
-            }
-        }
-        heardCall_ = call;
-        if (me_) {
-            // MyStation has its own copy that template substitution
-            // reads when keying <his>. Keep them in sync so F5
-            // (HisCall) renders what the user typed in the Call edit.
-            me_->setHisCall(std::move(call));
-        }
-    }
-    [[nodiscard]] const std::string& heardCall() const noexcept { return heardCall_; }
-    void playerSendMessage(Message msg);   // F1..F8 etc. (Phase E hook)
+    // ── Player input (Pascal MainForm → Tst.Me) ────────────────────
+    // Pascal TMainForm.SendMsg: for msgHisCall the Call field's text
+    // becomes Me.HisCall (if not empty), then Me.SendMsg(msg).
+    void playerSendMessage(Message msg, const std::string& callField = {});
+    // Pascal TMainForm.Edit1Change → Tst.Me.UpdateCallInMessage. Returns
+    // false when the edit could not be applied to a call being keyed or
+    // queued (the GUI then clears its CallSent flag).
+    bool playerEditedCall(const std::string& callField);
+    // Pascal Log.SaveQso's side effects on the simulation: find a
+    // finished DX station with this call (DataToLastQso) and bump the
+    // player's serial number. `call` is the logged call, '?' stripped.
+    void qsoLogged(const std::string& call);
+    // Me.Msg flags the GUI needs when Esc aborts a send (Pascal checks
+    // msgHisCall / msgNR in Tst.Me.Msg to clear CallSent / NrSent).
+    struct AbortInfo { bool hadHisCall; bool hadNr; };
+    AbortInfo playerAbortSend();
 
     // Pascal File → Audio Recording Enabled. While a writer is open
     // every rendered block is appended; turning it off closes and
@@ -136,18 +140,20 @@ public:
     // a primed Contest; less only at startup while skipping blocks).
     std::size_t renderNextBlock(std::span<float> out);
 
-    // Fired when the configured duration elapses (or playerStop is
-    // invoked). Phase-E wires this to the UI's score-dialog popup.
-    using EndOfSessionFn = std::function<void(RunMode)>;
+    // Fired when the configured duration elapses or a requested stop
+    // takes effect at the end of a block (Pascal FStopPressed). The GUI
+    // picks the end-of-contest popup from the mode and whether the user
+    // pressed Stop.
+    using EndOfSessionFn = std::function<void(RunMode, bool stoppedByUser)>;
     void setEndOfSessionCallback(EndOfSessionFn cb) {
         endOfSession_ = std::move(cb);
     }
     void requestStop() { stopRequested_ = true; }
 
-    // Fired when a DxStation's operator reaches Done — one per
-    // completed QSO. The callback runs on the sim thread; receivers
-    // must marshal updates to the GUI thread (Phase E uses a queued
-    // Qt signal).
+    // Fired when a finished DX station matches the last logged QSO
+    // (Pascal DataToLastQso). Carries the DX's own record — the truth
+    // the GUI's log checks the player's entry against. Runs on the sim
+    // thread; receivers marshal to the GUI with a queued signal.
     struct CompletedQso {
         std::string call;
         int rst;
@@ -157,6 +163,12 @@ public:
     using QsoCompletedFn = std::function<void(const CompletedQso&)>;
     void setQsoCompletedCallback(QsoCompletedFn cb) {
         qsoCompleted_ = std::move(cb);
+    }
+
+    // Pascal MainForm.Advance trigger: a piece of the player's message
+    // finished keying. Runs on the sim thread.
+    void setPlayerPieceFinishedCallback(std::function<void()> cb) {
+        me_->setPieceFinishedCallback(std::move(cb));
     }
 
     [[nodiscard]] MyStation& player() noexcept { return *me_; }
@@ -169,6 +181,9 @@ private:
     void applyEndOfSession();
     void spawnAutoCallers();
     void tickAndSweep();
+    // Report + release finished DX stations whose call matches the last
+    // logged QSO. Pascal does this in SaveQso and every block.
+    void matchLoggedQso();
     // Pascal: TContest.OnMeFinishedSending. Broadcasts evMeFinished
     // to every station and Poisson-spawns additional callers when the
     // player just sent CQ (or finished a QSO with TU + MyCall).
@@ -192,21 +207,16 @@ private:
     std::vector<float> realScratch_;
 
     ContestSettings settings_;
-    std::string heardCall_;
+    // Call of the most recent logged QSO this run (Pascal
+    // QsoList[High(QsoList)].Call) and how many QSOs are logged.
+    std::string lastLoggedCall_;
+    int qsoCount_ = 0;
 
     int blockIndex_ = 0;
     float currentMinute_ = 0.0F;
     double ritPhase_ = 0.0;
     float qskRfg_ = 1.0F;
 
-    // Previous state of the player station, sampled at the end of
-    // each renderNextBlock. Necessary because playerSendMessage
-    // flips MyStation::state_ to Sending IMMEDIATELY when the user
-    // presses an F-key — by the time the next block runs, the state
-    // is already Sending and a same-block before/after comparison
-    // misses the transition. Pascal: TMyStation.ProcessEvent fires
-    // evMsgSent/onMeStartedSending directly, side-stepping this.
-    StationState lastMeState_ = StationState::Listening;
 
     bool stopRequested_ = false;
     bool ended_ = false;

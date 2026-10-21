@@ -20,9 +20,10 @@ namespace mr::ui {
 
 namespace {
 
-// Pascal Shape2 colour 12902431 → RGB #DFCFC4. The Pascal RIT range
-// is documented in Ini.pas; we mirror it via the Ui:: constants.
-constexpr QColor kRitIndicatorColor{0xDF, 0xCF, 0xC4};
+// Pascal Shape2 colour 12902431 = $00C4E01F, stored $00BBGGRR → RGB
+// #1FE0C4 (turquoise). The Pascal RIT range is documented in Ini.pas;
+// we mirror it via the Ui:: constants.
+constexpr QColor kRitIndicatorColor{0x1F, 0xE0, 0xC4};
 
 }  // namespace
 

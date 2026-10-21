@@ -9,6 +9,7 @@
 #include "simulation/Contest.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 #include "core/Logging.h"
 #include "core/Random.h"
 
@@ -91,37 +92,98 @@ void Contest::setSettings(const ContestSettings& s) {
 
 void Contest::setRunMode(RunMode mode) {
     settings_.mode = mode;
-    if (mode == RunMode::Stop) {
-        // Pascal: TContest.Init clears the station collection and
-        // resets the block counter when transitioning out of a run.
-        stations_.clear();
-        blockIndex_ = 0;
-        currentMinute_ = 0.0F;
-        ended_ = false;
-        stopRequested_ = false;
-        return;
-    }
-    blockIndex_ = 0;
-    currentMinute_ = 0.0F;
     ended_ = false;
     stopRequested_ = false;
 
-    // Auto-CQ so the band has activity to interpret. In the original
-    // Delphi UI the player presses F1 to start; until Phase E wires
-    // F1 → playerSendMessage(Cq) through the GUI, we issue the same
-    // call internally so audible content appears.
-    if (mode == RunMode::PileUp || mode == RunMode::Wpx) {
-        playerSendMessage(Message::Cq);
-    } else if (mode == RunMode::Single || mode == RunMode::Hst) {
-        // Single / HST top up callers from spawnAutoCallers — no
-        // initial CQ keying needed; the FSM autopilot handles it.
+    if (mode == RunMode::Stop) {
+        // Pascal Run(rmStop) only disables audio output, so the clock
+        // keeps showing the final contest time. The station list is
+        // cleared here (Pascal clears it at the next Run) so nothing
+        // keyed while stopped piles up.
+        me_->abortSend();
+        stations_.clear();
+        return;
     }
+
+    // Pascal Run(<mode>): Tst.Me.AbortSend; Tst.BlockNumber := 0;
+    // Tst.Me.Nr := 1; Log.Clear (which also clears Tst.Stations).
+    // Starting a run keys nothing: in Pile-Up / WPX the player sends a
+    // CQ to draw callers; Single / HST callers come from
+    // spawnAutoCallers.
+    me_->abortSend();
+    blockIndex_ = 0;
+    currentMinute_ = 0.0F;
+    me_->setNr(1);
+    stations_.clear();
+    lastLoggedCall_.clear();
+    qsoCount_ = 0;
 }
 
-void Contest::playerSendMessage(Message msg) {
-    // MyStation::sendMsg handles message-set reset on idle and accumulates
-    // the bit into msg_; Engine::myLastMessage() returns me_->msg().
+namespace {
+
+std::string upper(std::string s) {
+    // IsMyCall compares raw characters, so keep calls upper-case the way
+    // Pascal's ecUpperCase edit does.
+    for (char& c : s) {
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 'a' + 'A');
+        }
+    }
+    return s;
+}
+
+}  // namespace
+
+void Contest::playerSendMessage(Message msg, const std::string& callField) {
+    // Pascal TMainForm.SendMsg.
+    if (msg == Message::HisCall && !callField.empty()) {
+        me_->setHisCall(upper(callField));
+    }
     me_->sendMsg(msg);
+}
+
+bool Contest::playerEditedCall(const std::string& callField) {
+    return me_->updateCallInMessage(upper(callField));
+}
+
+void Contest::qsoLogged(const std::string& call) {
+    // Pascal Log.SaveQso: look for the DX station in the log, then
+    // Inc(Tst.Me.NR).
+    lastLoggedCall_ = upper(call);
+    ++qsoCount_;
+    matchLoggedQso();
+    me_->setNr(me_->nr() + 1);
+}
+
+Contest::AbortInfo Contest::playerAbortSend() {
+    const MessageSet& m = me_->msg();
+    const AbortInfo info{contains(m, Message::HisCall), contains(m, Message::Nr)};
+    me_->abortSend();
+    return info;
+}
+
+void Contest::matchLoggedQso() {
+    if (lastLoggedCall_.empty()) {
+        return;
+    }
+    for (auto& sptr : stations_) {
+        auto* dx = dynamic_cast<DxStation*>(sptr.get());
+        if (dx == nullptr || dx->shouldRemove()
+            || dx->operatorState().state() != OperatorState::Done
+            || dx->myCall() != lastLoggedCall_) {
+            continue;
+        }
+        // TDxStation.DataToLastQso, then Free.
+        if (qsoCompleted_) {
+            CompletedQso q;
+            q.call = dx->myCall();
+            q.rst = dx->rst();
+            q.nr = dx->nr();
+            q.minute = currentMinute_;
+            qsoCompleted_(q);
+        }
+        dx->release();
+    }
 }
 
 void Contest::enableAudioRecording(const std::string& path) {
@@ -149,9 +211,9 @@ void Contest::configureDspChain() {
     // delay line, which is what we want when bandwidth shifts.
     const float bw = std::max(1.0F, static_cast<float>(settings_.rxBandwidthHz));
     const int points = std::max(1,
-        static_cast<int>(std::lround(
+        mr::core::delphiRound(
             kFilterPointsRatio * static_cast<float>(mr::constants::Audio::kSampleRate)
-            / bw)));
+            / bw));
     const float gainDb = 10.0F * std::log10(kFilterGainRefBw / bw);
     filter_.configure(points, kFilterPasses, bufferSize_, gainDb);
 
@@ -166,8 +228,9 @@ void Contest::onMeFinishedSending() {
     using namespace mr::constants::Sim;
     const MessageSet& heard = me_->msg();
     const bool playerCq = contains(heard, Message::Cq);
-    const bool playerEndedQso =
-        contains(heard, Message::Tu) && contains(heard, Message::MyCall);
+    // 1.68: TU + MyCall after a QSO counts as a CQ (QsoList <> nil).
+    const bool playerEndedQso = qsoCount_ > 0
+        && contains(heard, Message::Tu) && contains(heard, Message::MyCall);
     const bool spawnEligible = (settings_.mode != RunMode::Single)
                                && (settings_.mode != RunMode::Hst);
     int spawnCount = 0;
@@ -182,6 +245,9 @@ void Contest::onMeFinishedSending() {
             stations_.addCaller(this, callsignSource_->pickCall(rng_));
         }
     }
+    qCDebug(mrSim) << "me finished: cq=" << playerCq << "endedQso=" << playerEndedQso
+                  << "spawned=" << spawnCount << "dxOnBand=" << stations_.dxCount()
+                  << "activity=" << settings_.activity;
     // Broadcast evMeFinished to every station so DxOperators in
     // stCopying interpret the message-set we just keyed.
     for (auto& s : stations_) {
@@ -312,9 +378,10 @@ void Contest::applyEndOfSession() {
     if (elapsed >= durationSec || stopRequested_) {
         ended_ = true;
         const RunMode mode = settings_.mode;
+        const bool byUser = stopRequested_;
         setRunMode(RunMode::Stop);
         if (endOfSession_) {
-            endOfSession_(mode);
+            endOfSession_(mode, byUser);
         }
     }
 }
@@ -323,67 +390,41 @@ void Contest::spawnAutoCallers() {
     // Pascal Contest.pas::GetAudio tail end:
     //   rmSingle and DxCount=0 → spawn one caller
     //   rmHst and DxCount<Activity → top up to Activity
+    // In both cases Pascal first sets `Me.Msg := [msgCQ]` and then hands
+    // each new caller an evMeFinished, so it behaves as if it just heard
+    // a CQ (NeedPrevEnd → NeedQso) and calls after its send delay.
+    // Without the event the caller would sit in Copying forever and
+    // nobody would call until the player transmitted something.
+    MessageSet cq{};
+    cq.set(static_cast<std::size_t>(Message::Cq));
     if (settings_.mode == RunMode::Single && stations_.dxCount() == 0) {
-        stations_.addCaller(this, callsignSource_->pickCall(rng_));
+        me_->setMsg(cq);
+        stations_.addCaller(this, callsignSource_->pickCall(rng_))
+            ->processEvent(StationEvent::MeFinished);
     } else if (settings_.mode == RunMode::Hst) {
         const int needed = settings_.activity - static_cast<int>(stations_.dxCount());
+        if (needed > 0) {
+            me_->setMsg(cq);
+        }
         for (int i = 0; i < needed; ++i) {
             const std::string call = callsignSource_->pickAndRemoveCall(rng_);
-            stations_.addCaller(this, call);
+            stations_.addCaller(this, call)->processEvent(StationEvent::MeFinished);
         }
     }
 }
 
 void Contest::tickAndSweep() {
-    // Tick stations (advance timeouts, fire MsgSent for finished
-    // envelopes), then garbage-collect Failed / Done / finished QRN
-    // / spent QRM.
-    for (auto& s : stations_) {
-        s->tick();
-    }
-
-    // Watch the player's state edge across BLOCK boundaries to
-    // dispatch evMeStarted / evMeFinished. Comparing within one block
-    // misses the start-of-send edge entirely: playerSendMessage()
-    // flips MyStation to Sending the instant the user presses F5, so
-    // by the time the next block's tick runs, `before == Sending`
-    // already and tick() doesn't change it. The DX stations would
-    // therefore never receive evMeStarted, never enter stCopying,
-    // and would interpret the player's HisCall as garbage instead of
-    // a real callback (bug: F5 keys, DX keeps replying with its own
-    // call instead of advancing to NeedNr). We fix this by using
-    // lastMeState_ — captured at the END of the previous block — as
-    // the "before" reference. This straddles the gap during which
-    // playerSendMessage runs on another thread.
-    const StationState before = lastMeState_;
+    // Pascal GetAudio: Me.Tick, then every station's Tick (last to
+    // first). The player's start/finish events fire synchronously from
+    // MyStation (sendText / MsgSent), as in Pascal.
     me_->tick();
-    const StationState after = me_->state();
-    if (before != StationState::Sending && after == StationState::Sending) {
-        onMeStartedSending();
-    } else if (before == StationState::Sending && after != StationState::Sending) {
-        onMeFinishedSending();
+    for (std::size_t i = stations_.size(); i-- > 0;) {
+        stations_[i].tick();
     }
-    lastMeState_ = after;
 
-    // E.G3 truth back-fill: just before sweep, any DxStation whose
-    // operator reached Done is reported via qsoCompleted_ so the GUI
-    // can validate the player's logged QSO row (DUP/NIL/RST/NR/clean
-    // tag in the Chk column) and update the score table. Pascal does
-    // the same back-fill from Log.DataToLastQso when the DX is freed.
-    if (qsoCompleted_) {
-        for (auto& sptr : stations_) {
-            if (auto* dx = dynamic_cast<DxStation*>(sptr.get());
-                dx != nullptr
-                && dx->operatorState().state() == OperatorState::Done) {
-                CompletedQso q;
-                q.call   = dx->myCall();
-                q.rst    = dx->rst();
-                q.nr     = dx->nr();
-                q.minute = currentMinute_;
-                qsoCompleted_(q);
-            }
-        }
-    }
+    // "if DX is done, write to log and kill" — the DX matching the last
+    // logged QSO hands over its record, then goes away.
+    matchLoggedQso();
 
     stations_.sweep();
 }

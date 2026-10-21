@@ -43,8 +43,8 @@ public:
     // it builds a Station out of band (e.g. the player station).
     Station* take(std::unique_ptr<Station> s);
 
-    // Removes any station whose `isFinished()` (DxStation / QrnStation /
-    // QrmStation) returns true. Stable order; reuses vector capacity.
+    // Removes finished stations: DxStation::shouldRemove(), or
+    // isFinished() for QRN / QRM. Stable order; reuses vector capacity.
     void sweep();
 
     // Iteration helpers — the Contest's per-block render loop needs

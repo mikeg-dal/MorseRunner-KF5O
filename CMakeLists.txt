@@ -60,6 +60,7 @@ qt_standard_project_setup()
 option(MORSERUNNER_BUILD_TESTS "Build unit and golden-WAV tests" ON)
 option(MORSERUNNER_ENABLE_TSAN "Build with ThreadSanitizer (Debug only)" OFF)
 option(MORSERUNNER_ENABLE_ASAN "Build with AddressSanitizer (Debug only)" OFF)
+option(MORSERUNNER_BUILD_GOLDEN "Build the reference-data dump tools for the Swift port" OFF)
 
 if(MORSERUNNER_ENABLE_TSAN)
     add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
@@ -73,6 +74,9 @@ endif()
 # ── Sub-targets ─────────────────────────────────────────────────────────────
 add_subdirectory(src)
 add_subdirectory(resources)
+if(MORSERUNNER_BUILD_GOLDEN)
+    add_subdirectory(tools/golden)
+endif()
 
 if(MORSERUNNER_BUILD_TESTS)
     enable_testing()

@@ -9,6 +9,7 @@
 #include "dsp/MorseKeyer.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 #include "dsp/BlackmanHarris.h"
 #include "dsp/MorseTable.h"
 
@@ -64,21 +65,20 @@ void MorseKeyer::recomputeTiming() {
     using namespace mr::constants::Dsp;
     // SamplesInUnit = round(0.1 · SR · 12 / WPM). For SR = 11025, WPM = 30:
     // SamplesInUnit = round(441) = 441 — matches Delphi byte-for-byte.
-    const double samples = static_cast<double>(kMorseUnitSecondsCoef)
+    const double samples = kMorseUnitSecondsCoef
                            * static_cast<double>(sampleRate_)
                            * static_cast<double>(kMorseUnitsPerWpmRef)
                            / static_cast<double>(wpm_);
-    samplesPerUnit_ = static_cast<int>(std::lround(samples));
+    samplesPerUnit_ = mr::core::delphiRound(samples);
 }
 
 void MorseKeyer::rebuildRamps() {
     using namespace mr::constants::Dsp;
     // RampLen = round(2.7 · RiseTime · SR). RiseTime = 5 ms → RampLen ≈ 149
     // samples at SR = 11025. Pascal: VCL/MorseKey.pas::MakeRamp.
-    const double len = static_cast<double>(kBlackmanHarrisStretch)
-                       * static_cast<double>(kRiseTimeSeconds)
+    const double len = kBlackmanHarrisStretch * kRiseTimeSeconds
                        * static_cast<double>(sampleRate_);
-    rampSamples_ = static_cast<int>(std::lround(len));
+    rampSamples_ = mr::core::delphiRound(len);
     rampOn_ = blackmanHarrisStep(rampSamples_);
     rampOff_.assign(rampOn_.size(), 0.0F);
     // Off-ramp is the on-ramp reversed (so the keying envelope is
@@ -134,36 +134,43 @@ std::vector<float> MorseKeyer::renderEnvelope(std::string_view text) const {
     std::vector<float> out;
     out.resize(static_cast<std::size_t>(trueLen), 0.0F);
 
-    auto pos = std::size_t{0};
+    // Pascal keeps a signed write pointer. Above ~88 WPM a unit is
+    // shorter than the 149-sample ramp, so `Dur*SamplesInUnit - RampLen`
+    // goes negative: AddOn writes nothing, AddOn/AddOff move the pointer
+    // back, and the next ramp overwrites the tail of the previous one.
+    // Skipping the negative step instead ran the pointer past the end of
+    // the buffer. Writes are bounds-checked as a safety net; for every
+    // WPM in 10..120 Pascal's arithmetic already stays inside trueLen.
+    int pos = 0;
+    const int outLen = static_cast<int>(out.size());
 
-    auto addRampOn = [&]() {
-        // Copy ramp-on into the envelope, then advance `pos` by ramp.
-        std::copy(rampOn_.begin(), rampOn_.end(), out.begin() + static_cast<std::ptrdiff_t>(pos));
-        pos += rampOn_.size();
+    auto writeRamp = [&](const std::vector<float>& r) {
+        const int n = static_cast<int>(r.size());
+        for (int i = 0; i < n; ++i) {
+            const int at = pos + i;
+            if (at >= 0 && at < outLen) {
+                out[static_cast<std::size_t>(at)] = r[static_cast<std::size_t>(i)];
+            }
+        }
+        pos += n;
     };
-    auto addRampOff = [&]() {
-        std::copy(rampOff_.begin(), rampOff_.end(),
-                  out.begin() + static_cast<std::ptrdiff_t>(pos));
-        pos += rampOff_.size();
-    };
+    auto addRampOn = [&]() { writeRamp(rampOn_); };
+    auto addRampOff = [&]() { writeRamp(rampOff_); };
     auto addOn = [&](int durUnits) {
         // Pascal: `AddOn(Dur)` fills `Dur*SamplesInUnit - RampLen` samples
         // at 1.0. The ramp before/after eats the rest of the duration.
         const int span = durUnits * unitSamples - ramp;
-        if (span > 0) {
-            const auto end = pos + static_cast<std::size_t>(span);
-            std::fill(out.begin() + static_cast<std::ptrdiff_t>(pos),
-                      out.begin() + static_cast<std::ptrdiff_t>(end), 1.0F);
-            pos = end;
+        for (int i = 0; i < span; ++i) {
+            const int at = pos + i;
+            if (at >= 0 && at < outLen) {
+                out[static_cast<std::size_t>(at)] = 1.0F;
+            }
         }
+        pos += span;
     };
     auto addOff = [&](int durUnits) {
-        // Off-state: just advance `pos` past `Dur*SamplesInUnit - RampLen`
-        // samples; the buffer is already zero-initialized.
-        const int span = durUnits * unitSamples - ramp;
-        if (span > 0) {
-            pos += static_cast<std::size_t>(span);
-        }
+        // Off-state: only move the pointer; the buffer is zero-initialized.
+        pos += durUnits * unitSamples - ramp;
     };
 
     for (const char c : morse) {

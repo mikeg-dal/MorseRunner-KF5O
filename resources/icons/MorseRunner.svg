@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Morse Runner — macOS Qt 6 port
+  Copyright (C) 2004-2006 Alex Shovkoplyas, VE3NEA (original Delphi)
+  Copyright (C) 2026 Mike Garcia, KF5O (macOS port)
+
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+  Application icon master. A macOS-style redraw of the original
+  MorseRun.ico motif (stopwatch + straight key). Render with
+  scripts/make_iconset.sh resources/icons/MorseRunner.svg
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f3a68"/>
+      <stop offset="1" stop-color="#0b1730"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.38" cy="0.36" r="0.6">
+      <stop offset="0" stop-color="#3d6db5" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#3d6db5" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bezel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4f6f9"/>
+      <stop offset="0.5" stop-color="#b9c1cc"/>
+      <stop offset="1" stop-color="#7d8794"/>
+    </linearGradient>
+    <radialGradient id="face" cx="0.45" cy="0.4" r="0.65">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e3e7ee"/>
+    </radialGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe08a"/>
+      <stop offset="0.45" stop-color="#e0a632"/>
+      <stop offset="1" stop-color="#9a6514"/>
+    </linearGradient>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a3326"/>
+      <stop offset="1" stop-color="#22160f"/>
+    </linearGradient>
+    <linearGradient id="knob" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#55595f"/>
+      <stop offset="1" stop-color="#121417"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
+      <feOffset dy="12"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="tileShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dy="10"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  </defs>
+
+  <!-- Tile (Big Sur grid: 824 px body on a 1024 canvas) -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)" filter="url(#tileShadow)"/>
+  <g clip-path="url(#tile)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#glow)"/>
+    <!-- Morse "MR" ( - -   . - . ) running along the bottom -->
+    <g fill="#ffb238" opacity="0.9">
+      <rect x="294" y="842" width="88" height="26" rx="13"/>
+      <rect x="402" y="842" width="88" height="26" rx="13"/>
+      <rect x="550" y="842" width="26" height="26" rx="13"/>
+      <rect x="596" y="842" width="88" height="26" rx="13"/>
+      <rect x="704" y="842" width="26" height="26" rx="13"/>
+    </g>
+  </g>
+
+  <!-- Stopwatch -->
+  <g filter="url(#shadow)">
+    <!-- crown + side button -->
+    <rect x="378" y="178" width="84" height="40" rx="12" fill="url(#bezel)"/>
+    <rect x="400" y="208" width="40" height="40" fill="url(#bezel)"/>
+    <rect x="566" y="236" width="36" height="58" rx="10" fill="url(#bezel)" transform="rotate(45 584 265)"/>
+    <circle cx="420" cy="440" r="200" fill="url(#bezel)"/>
+    <circle cx="420" cy="440" r="172" fill="#d6283b"/>
+    <circle cx="420" cy="440" r="156" fill="url(#face)"/>
+    <!-- ticks -->
+    <g stroke="#1b2740" stroke-linecap="round">
+      <g stroke-width="12">
+        <line x1="420" y1="300" x2="420" y2="330"/>
+        <line x1="560" y1="440" x2="530" y2="440"/>
+        <line x1="420" y1="580" x2="420" y2="550"/>
+        <line x1="280" y1="440" x2="310" y2="440"/>
+      </g>
+      <g stroke-width="7" transform="rotate(30 420 440)">
+        <line x1="420" y1="302" x2="420" y2="320"/><line x1="420" y1="578" x2="420" y2="560"/>
+      </g>
+      <g stroke-width="7" transform="rotate(60 420 440)">
+        <line x1="420" y1="302" x2="420" y2="320"/><line x1="420" y1="578" x2="420" y2="560"/>
+      </g>
+      <g stroke-width="7" transform="rotate(120 420 440)">
+        <line x1="420" y1="302" x2="420" y2="320"/><line x1="420" y1="578" x2="420" y2="560"/>
+      </g>
+      <g stroke-width="7" transform="rotate(150 420 440)">
+        <line x1="420" y1="302" x2="420" y2="320"/><line x1="420" y1="578" x2="420" y2="560"/>
+      </g>
+    </g>
+    <!-- elapsed sweep -->
+    <path d="M420 440 L420 322 A118 118 0 0 1 522 381 Z" fill="#d6283b" opacity="0.18"/>
+    <!-- hands -->
+    <line x1="420" y1="440" x2="420" y2="322" stroke="#1b2740" stroke-width="14" stroke-linecap="round"/>
+    <line x1="420" y1="440" x2="527" y2="378" stroke="#d6283b" stroke-width="9" stroke-linecap="round"/>
+    <circle cx="420" cy="440" r="18" fill="#1b2740"/>
+    <circle cx="420" cy="440" r="7" fill="#d6283b"/>
+  </g>
+
+  <!-- Straight key -->
+  <g filter="url(#shadow)">
+    <!-- base -->
+    <rect x="430" y="720" width="430" height="70" rx="20" fill="url(#base)"/>
+    <rect x="430" y="720" width="430" height="14" rx="7" fill="#7a5640" opacity="0.7"/>
+    <!-- trunnion / pivot post -->
+    <path d="M700 724 L720 640 L780 640 L800 724 Z" fill="url(#brass)"/>
+    <circle cx="750" cy="648" r="20" fill="#7d5a1c"/>
+    <circle cx="750" cy="648" r="9" fill="#ffe08a"/>
+    <!-- contact post -->
+    <rect x="566" y="684" width="30" height="40" rx="6" fill="url(#brass)"/>
+    <!-- lever -->
+    <path d="M520 662 L840 626 L846 650 L526 690 Z" fill="url(#brass)"/>
+    <!-- tension spring -->
+    <path d="M650 672 l-10 8 l20 8 l-20 8 l20 8 l-20 8 l10 6" fill="none" stroke="#c8ccd2" stroke-width="5" stroke-linejoin="round"/>
+    <!-- knob -->
+    <rect x="500" y="660" width="40" height="22" rx="6" fill="url(#brass)"/>
+    <ellipse cx="520" cy="652" rx="78" ry="26" fill="#0f1114"/>
+    <path d="M442 652 L448 614 Q520 588 592 614 L598 652 Z" fill="url(#knob)"/>
+    <ellipse cx="520" cy="614" rx="72" ry="22" fill="#3a3e44"/>
+    <ellipse cx="506" cy="609" rx="34" ry="8" fill="#ffffff" opacity="0.25"/>
+  </g>
+</svg>

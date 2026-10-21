@@ -52,6 +52,13 @@ public:
         return scoreCells_[row][col];
     }
 
+    // Pascal Run(): in HST the ListView is hidden and Panel11's own
+    // caption (bold 19 px) shows the score; any other run shows the
+    // table again. Stop leaves whichever is showing.
+    void setScoreTableVisible(bool visible);
+    // Pascal UpdateStatsHst: Panel11.Caption := Score.
+    void setHstScore(int score);
+
     // F1..F8 buttons (index 0..7). Phase E connects each to
     // SimulationWorker::sendPlayerMessage. Read-only — buttons live
     // for the panel's lifetime.
@@ -80,6 +87,8 @@ private:
     QPushButton* fKeyButtons_[8] = {};
     // [row][col] = score-table cell. Live-updated in MainWindow.
     QLabel* scoreCells_[3][2] = {};
+    QWidget* scoreGrid_ = nullptr;     // ListView1
+    QLabel* hstScoreLabel_ = nullptr;  // Panel11.Caption
 };
 
 }  // namespace mr::ui

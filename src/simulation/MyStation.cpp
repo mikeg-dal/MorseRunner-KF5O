@@ -37,12 +37,9 @@ MyStation::MyStation(Engine* engine) : Station(engine) {
 }
 
 void MyStation::processEvent(StationEvent event) {
-    // Pascal: TMyStation.ProcessEvent — only handles evMsgSent.
-    if (event == StationEvent::MsgSent) {
-        // In the Pascal flow this propagates through Contest's
-        // OnMeFinishedSending hook. Group 4's Contest watches the
-        // player's state transitions; nothing to do here at the
-        // station level.
+    // Pascal: if AEvent = evMsgSent then Tst.OnMeFinishedSending.
+    if (event == StationEvent::MsgSent && engine_ != nullptr) {
+        engine_->onPlayerFinishedSending();
     }
 }
 
@@ -78,8 +75,10 @@ void MyStation::sendText(const std::string& text) {
 
     if (state_ != StationState::Sending) {
         sendNextPiece();
-        // Pascal: Tst.OnMeStartedSending. Contest hook; not needed at
-        // station scope.
+        // Pascal: Tst.OnMeStartedSending.
+        if (engine_ != nullptr) {
+            engine_->onPlayerStartedSending();
+        }
     }
 }
 
@@ -95,7 +94,15 @@ void MyStation::sendNextPiece() {
     const std::string& head = pieces_.front();
     if (head.size() == 1 && head[0] == kHisCallSentinel) {
         // Expand the `<his>` slot with whatever hisCall_ is right now.
-        Station::sendText(hisCall_);
+        // CallsFromKeyer: an external keyer sends the call, so key a
+        // blank instead (Pascal keeps the call in WPX and HST).
+        const RunMode mode = (engine_ != nullptr) ? engine_->runMode() : RunMode::PileUp;
+        if (engine_ != nullptr && engine_->callsFromKeyer()
+            && mode != RunMode::Hst && mode != RunMode::Wpx) {
+            Station::sendText(" ");
+        } else {
+            Station::sendText(hisCall_);
+        }
     } else {
         // Substitute the remaining placeholders (`<#>`, `<my>`) via
         // the base Station::sendText, but pre-replace any `<#>` here
@@ -107,64 +114,58 @@ void MyStation::sendNextPiece() {
 std::size_t MyStation::getBlock(std::span<float> out) {
     const std::size_t written = Station::getBlock(out);
     // When the current piece's envelope is exhausted, pop it and start
-    // the next. Pascal: TMyStation.GetBlock pops Pieces[0] and calls
-    // SendNextPiece, then signals MainForm.Advance — that UI signal
-    // belongs to Phase E.
+    // the next. Pascal: TMyStation.GetBlock pops Pieces[0], calls
+    // SendNextPiece, then MainForm.Advance.
     if (envelopeExhausted() && !pieces_.empty()) {
         pieces_.pop_front();
         if (!pieces_.empty()) {
             sendNextPiece();
+        }
+        if (pieceFinished_) {
+            pieceFinished_();
         }
     }
     return written;
 }
 
 bool MyStation::updateCallInMessage(const std::string& newCall) {
+    // Pascal TMyStation.UpdateCallInMessage.
     if (newCall.empty()) {
         return false;
     }
 
-    // If we're currently keying the `<his>` piece, only the prefix
-    // already keyed has to match the new call's prefix — otherwise we
-    // can swap the envelope in place.
-    bool isCurrentlyKeyingHisSlot =
-        !pieces_.empty() && pieces_.front().size() == 1
-        && pieces_.front()[0] == kHisCallSentinel
-        && !envelope_.empty();
+    // Are we sending the call right now?
+    bool ok = !pieces_.empty() && pieces_.front().size() == 1
+              && pieces_.front()[0] == kHisCallSentinel;
 
-    if (isCurrentlyKeyingHisSlot) {
-        // Generate the envelope for the new call.
+    // Is the part of the call already keyed the same in the new call?
+    if (ok) {
         keyer_.setWpm(wpm_);
         auto candidate = keyer_.renderEnvelope(newCall);
         for (float& s : candidate) {
             s *= amplitude_;
         }
-
-        if (candidate.size() < sendPos_) {
-            return false;  // already keyed more than the new envelope offers
+        ok = candidate.size() >= sendPos_ && envelope_.size() >= sendPos_;
+        for (std::size_t i = 0; ok && i < sendPos_; ++i) {
+            ok = (envelope_[i] == candidate[i]);
         }
-        // Compare the already-emitted prefix; if it's bit-identical,
-        // the swap is silent.
-        for (std::size_t i = 0; i < sendPos_; ++i) {
-            if (envelope_[i] != candidate[i]) {
-                return false;
+        if (ok) {
+            envelope_ = std::move(candidate);
+            setHisCall(newCall);
+        }
+    }
+
+    // Could not correct the call being keyed, but another call is
+    // queued for sending: use the new call there.
+    if (!ok) {
+        for (std::size_t i = 1; i < pieces_.size(); ++i) {
+            if (pieces_[i].size() == 1 && pieces_[i][0] == kHisCallSentinel) {
+                setHisCall(newCall);
+                return true;
             }
         }
-        envelope_ = std::move(candidate);
-        setHisCall(newCall);
-        return true;
     }
-
-    // Not currently keying his — search for the next pending sentinel
-    // and rewrite the call to use on its expansion.
-    for (auto it = pieces_.begin() + (pieces_.empty() ? 0 : 1);
-         it != pieces_.end(); ++it) {
-        if (it->size() == 1 && (*it)[0] == kHisCallSentinel) {
-            setHisCall(newCall);
-            return true;
-        }
-    }
-    return false;
+    return ok;
 }
 
 }  // namespace mr::sim

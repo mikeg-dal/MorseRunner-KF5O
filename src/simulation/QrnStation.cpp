@@ -9,6 +9,7 @@
 #include "simulation/QrnStation.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 #include "core/Random.h"
 #include "simulation/Engine.h"
 
@@ -27,8 +28,8 @@ QrnStation::QrnStation(Engine* engine) : Station(engine) {
     // The total envelope length spans up to ~1 second of audio, but
     // most of those samples will stay 0 — only ~1% receive a spike.
     const double seconds = static_cast<double>(rng.uniform01());
-    const int blocks = static_cast<int>(std::lround(
-        seconds * static_cast<double>(kSampleRate) / static_cast<double>(bufSize)));
+    const int blocks = mr::core::delphiRound(
+        seconds * static_cast<double>(kSampleRate) / static_cast<double>(bufSize));
     const std::size_t durSamples =
         static_cast<std::size_t>(blocks) * static_cast<std::size_t>(bufSize);
 

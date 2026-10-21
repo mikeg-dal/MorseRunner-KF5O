@@ -9,6 +9,7 @@
 #include "simulation/DxStation.h"
 
 #include "core/Constants.h"
+#include "core/DelphiRound.h"
 #include "core/Random.h"
 #include "simulation/Engine.h"
 
@@ -63,7 +64,7 @@ DxStation::DxStation(Engine* engine, std::string heardCall)
     setAmplitude(kDxAmpBase + kDxAmpSpread * (1.0F + rng.uShaped()));
 
     // Pascal: Pitch := Round(RndGaussLim(0, 300)). Per-station BFO offset.
-    setPitchHz(static_cast<int>(std::lround(rng.gaussLim(0.0F, kDxPitchSpreadHz))));
+    setPitchHz(mr::core::delphiRound(rng.gaussLim(0.0F, kDxPitchSpreadHz)));
 
     // Pascal: TimeOut := NEVER; State := stCopying. The MeFinished event
     // will arrive on the next render tick.
@@ -76,6 +77,10 @@ bool DxStation::isFinished() const noexcept {
     return s == OperatorState::Done || s == OperatorState::Failed;
 }
 
+bool DxStation::shouldRemove() const noexcept {
+    return released_ || operator_->state() == OperatorState::Failed;
+}
+
 void DxStation::processEvent(StationEvent event) {
     if (operator_->state() == OperatorState::Done) {
         return;
@@ -83,12 +88,14 @@ void DxStation::processEvent(StationEvent event) {
 
     switch (event) {
         case StationEvent::MsgSent:
-            // We finished sending and started listening. Pascal: if
-            // Tst.Me.State = stSending then TimeOut := NEVER else
-            // TimeOut := Oper.GetReplyTimeout. We approximate by
-            // checking whether the player's last message set is empty
-            // (the engine knows). Conservative: always wait for reply.
-            setTimeout(operator_->getReplyTimeoutBlocks());
+            // We finished sending and started listening. If the player
+            // is already transmitting, wait for them to finish (their
+            // evMeFinished drives us) instead of timing out over them.
+            // Pascal: if Tst.Me.State = stSending then TimeOut := NEVER
+            // else TimeOut := Oper.GetReplyTimeout.
+            setTimeout((engine_ != nullptr && engine_->playerSending())
+                           ? kNeverTimeout
+                           : operator_->getReplyTimeoutBlocks());
             break;
 
         case StationEvent::Timeout: {

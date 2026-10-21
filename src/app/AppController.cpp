@@ -75,8 +75,14 @@ void AppController::start() {
     auto* sw = d_->simWorker.get();
     connect(mw, &mr::ui::MainWindow::runModeRequested,     sw,
             &mr::audio::SimulationWorker::setRunMode, Qt::QueuedConnection);
+    connect(mw, &mr::ui::MainWindow::stopRequested,        sw,
+            &mr::audio::SimulationWorker::requestStop, Qt::QueuedConnection);
     connect(mw, &mr::ui::MainWindow::sendMessageRequested, sw,
             &mr::audio::SimulationWorker::sendPlayerMessage, Qt::QueuedConnection);
+    connect(mw, &mr::ui::MainWindow::playerCallEdited,     sw,
+            &mr::audio::SimulationWorker::playerEditedCall, Qt::QueuedConnection);
+    connect(mw, &mr::ui::MainWindow::qsoLogged,            sw,
+            &mr::audio::SimulationWorker::logQso, Qt::QueuedConnection);
     connect(mw, &mr::ui::MainWindow::qrnToggled,           sw,
             &mr::audio::SimulationWorker::setQrn, Qt::QueuedConnection);
     connect(mw, &mr::ui::MainWindow::qrmToggled,           sw,
@@ -107,8 +113,6 @@ void AppController::start() {
             &mr::audio::SimulationWorker::setMyCallsign, Qt::QueuedConnection);
     connect(mw, &mr::ui::MainWindow::ritChanged,           sw,
             &mr::audio::SimulationWorker::setRitHz, Qt::QueuedConnection);
-    connect(mw, &mr::ui::MainWindow::heardCallsignChanged, sw,
-            &mr::audio::SimulationWorker::setHeardCallsign, Qt::QueuedConnection);
     connect(mw, &mr::ui::MainWindow::abortSendRequested,   sw,
             &mr::audio::SimulationWorker::abortSend, Qt::QueuedConnection);
     connect(mw, &mr::ui::MainWindow::audioRecordingToggled, sw,
@@ -124,6 +128,12 @@ void AppController::start() {
             mw, &mr::ui::MainWindow::onContestEnded);
     connect(sw, &mr::audio::SimulationWorker::dxQsoCompleted,
             mw, &mr::ui::MainWindow::onDxQsoCompleted);
+    connect(sw, &mr::audio::SimulationWorker::playerPieceFinished,
+            mw, &mr::ui::MainWindow::onPlayerPieceFinished);
+    connect(sw, &mr::audio::SimulationWorker::callEditResult,
+            mw, &mr::ui::MainWindow::onCallEditResult);
+    connect(sw, &mr::audio::SimulationWorker::sendAborted,
+            mw, &mr::ui::MainWindow::onSendAborted);
 
     // E.G4: persist every control change to the plist on the spot.
     // Settings::set*() calls sync() so the value is flushed even if the
@@ -143,8 +153,6 @@ void AppController::start() {
             this, [st](int v) { st->setActivity(v); });
     connect(mw, &mr::ui::MainWindow::durationChanged,
             this, [st](int v) { st->setDurationMinutes(v); });
-    connect(mw, &mr::ui::MainWindow::ritChanged,
-            this, [st](int v) { st->setRitHz(v); });
     connect(mw, &mr::ui::MainWindow::monitorLevelChanged,
             this, [st](double v) { st->setMonitorLevel(v); });
     connect(mw, &mr::ui::MainWindow::qskToggled,
@@ -184,18 +192,25 @@ void AppController::start() {
         rp->lidsCheckBox()->setChecked(loaded.lids);
         rp->activitySpin()->setValue(loaded.activity);
         rp->durationSpin()->setValue(loaded.durationMinutes);
-        rp->pitchCombo()->setCurrentText(QString::number(loaded.pitchHz));
-        rp->bandwidthCombo()->setCurrentText(QString::number(loaded.bandwidthHz));
+        // Items read "600 Hz" with the bare Hz value as item data, so
+        // match on data — setCurrentText("600") never finds an item.
+        if (const int i = rp->pitchCombo()->findData(loaded.pitchHz); i >= 0) {
+            rp->pitchCombo()->setCurrentIndex(i);
+        }
+        if (const int i = rp->bandwidthCombo()->findData(loaded.bandwidthHz); i >= 0) {
+            rp->bandwidthCombo()->setCurrentIndex(i);
+        }
         if (auto* vs = rp->volumeSlider(); vs != nullptr) {
             vs->setValue(loaded.monitorLevel);
         }
     }
-    if (auto* bp = mainWindow_->bottomPanel(); bp != nullptr) {
-        if (auto* rs = bp->ritSlider(); rs != nullptr) {
-            rs->setRitHz(loaded.ritHz);
-        }
-    }
+    // Pascal never persists RIT; it starts at 0 every launch.
 
+    // INI-only options.
+    mainWindow_->setCompetitionDuration(loaded.competitionDuration);
+    QMetaObject::invokeMethod(sw, [sw, on = loaded.callsFromKeyer]() {
+        sw->setCallsFromKeyer(on);
+    }, Qt::QueuedConnection);
     // Restore the operator name in the title bar (Pascal Operator1Click
     // also re-applies on next startup via FormCreate).
     mainWindow_->applyHamNameToTitle(loaded.hamName);

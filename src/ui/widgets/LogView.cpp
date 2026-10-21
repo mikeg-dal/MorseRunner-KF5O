@@ -85,6 +85,19 @@ void LogView::appendQsoRow(const QString& row, const QString& errorTag) {
     (void) errorTag;  // reserved for Phase E (e.g. tooltip annotations)
 }
 
+void LogView::replaceLastQsoRow(const QString& row) {
+    QTextCursor cursor(document());
+    cursor.movePosition(QTextCursor::End);
+    if (cursor.blockNumber() == 0) {
+        return;  // only the header line
+    }
+    cursor.movePosition(QTextCursor::StartOfBlock);
+    cursor.movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor);
+    cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+    cursor.removeSelectedText();
+    appendQsoRow(row, row.right(kErrorTagLength));
+}
+
 void LogView::clear() {
     QTextEdit::clear();
     setHeader(HeaderStyle::WpxPrefix);

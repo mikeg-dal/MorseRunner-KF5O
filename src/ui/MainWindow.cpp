@@ -21,7 +21,10 @@
 #include "ui/widgets/RitSlider.h"
 #include "ui/widgets/VolumeSlider.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QDateTime>
+#include <QTimer>
 #include <QComboBox>
 #include <QLineEdit>
 #include <QCoreApplication>
@@ -55,7 +58,10 @@
 #include <QMenuBar>
 #include <QObject>
 #include <QStatusBar>
+#include <QToolButton>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace mr::ui {
 
@@ -80,6 +86,15 @@ void addNumericChoices(QMenu* menu, const std::initializer_list<int>& values,
         act->setData(v);
         group->addAction(act);
         QObject::connect(act, &QAction::triggered, receiver, slot);
+    }
+}
+
+// Mirror a panel control's value into its Settings submenu: check the
+// item whose data matches, or clear every check when the control holds
+// a value the menu does not list (e.g. 23 WPM typed into the spin).
+void checkMatchingAction(QMenu* menu, int value) {
+    for (QAction* a : menu->actions()) {
+        a->setChecked(a->data().toInt() == value);
     }
 }
 
@@ -155,6 +170,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     buildMenus();
     buildCentralLayout();
+
+    // Pascal KeyPreview: see keys before the focused control.
+    qApp->installEventFilter(this);
 }
 
 MainWindow::~MainWindow() = default;
@@ -177,6 +195,13 @@ void MainWindow::buildCentralLayout() {
     const int logW = kMainWindowWidth - kRightPanelWidth;
     const int logH = kMainWindowHeight - kBottomPanelHeight - kTopBevelHeight;
     logView_->setGeometry(logX, logY, logW, logH);
+
+    // Pascal ToolButton1: AllowAllUp/Grouped — shown "down" while a run
+    // is going (SetToolbuttonDown); the caption stays "Run".
+    if (auto* rb = rightPanel_->runButton(); rb != nullptr) {
+        rb->setCheckable(true);
+        rb->setText(QStringLiteral("   Run   "));
+    }
 
     // Cache F-key button pointers so AppController can iterate them.
     for (int i = 0; i < 8; ++i) {
@@ -294,7 +319,9 @@ void MainWindow::buildRunMenu() {
 
     menus_->runPileUp = menus_->run->addAction(QStringLiteral("Pile-Up"));
     menus_->runPileUp->setCheckable(true);
-    menus_->runPileUp->setShortcut(QKeySequence(Qt::Key_F8));
+    // Main.dfm also gives Pile-Up F8, colliding with Send > NIL (F8).
+    // NIL is the operating key, so it keeps F8; the Run button body
+    // starts Pile-Up in one click. See docs/parity-checklist.md.
     group->addAction(menus_->runPileUp);
 
     menus_->runSingleCalls = menus_->run->addAction(QStringLiteral("Single Calls"));
@@ -538,26 +565,22 @@ void MainWindow::onPlaceholderAction() {
     }
 }
 
-void MainWindow::onClockTicked(int seconds) {
-    // hh:mm:ss formatter mirroring the Pascal panel readout.
-    sessionSeconds_ = seconds;
-    const int h = seconds / 3600;
-    const int m = (seconds / 60) % 60;
-    const int s = seconds % 60;
+void MainWindow::onClockTicked(double seconds) {
+    // Pascal GetAudio, every block while running:
+    //   Panel2.Caption := FormatDateTime('hh:nn:ss', BlocksToSeconds(..))
+    //   ShowRate
+    // FormatDateTime rounds to the millisecond and drops the rest.
+    elapsedSeconds_ = seconds;
+    const long long totalSec = std::llround(seconds * 1000.0) / 1000;
     const QString text = QStringLiteral("%1:%2:%3")
-        .arg(h, 2, 10, QChar('0'))
-        .arg(m, 2, 10, QChar('0'))
-        .arg(s, 2, 10, QChar('0'));
+        .arg(static_cast<int>((totalSec / 3600) % 24), 2, 10, QChar('0'))
+        .arg(static_cast<int>((totalSec / 60) % 60), 2, 10, QChar('0'))
+        .arg(static_cast<int>(totalSec % 60), 2, 10, QChar('0'));
     if (auto* lbl = bottomPanel_->clockLabel(); lbl != nullptr) {
         lbl->setText(text);
     }
-    // Live rate readout. Pascal ShowRate computes
-    // "QSOs * 3600 / SessionSeconds" then writes "%d  qso/hr.".
-    if (auto* rate = bottomPanel_->rateLabel(); rate != nullptr) {
-        const int qsoPerHr = (sessionSeconds_ > 0)
-            ? (totalLoggedQsos_ * 3600 / sessionSeconds_)
-            : 0;
-        rate->setText(QStringLiteral("%1  qso/hr.").arg(qsoPerHr));
+    if (runMode_ != static_cast<int>(mr::sim::RunMode::Stop)) {
+        refreshRateAndHistogram();
     }
 }
 
@@ -581,10 +604,15 @@ QString MainWindow::recordedAudioPath() const {
     return dir + QStringLiteral("/MorseRunner.wav");
 }
 
-void MainWindow::appendScoreHistoryLine(const QString& line) const {
-    const QString path = scoreHistoryPath();
-    QFileInfo info(path);
-    QDir().mkpath(info.absolutePath());
+QString MainWindow::hstResultsPath() const {
+    // Pascal: ExtractFilePath(ParamStr(0)) + 'HstResults.txt'.
+    const QString dir = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation);
+    return dir + QStringLiteral("/HstResults.txt");
+}
+
+void MainWindow::appendLine(const QString& path, const QString& line) {
+    QDir().mkpath(QFileInfo(path).absolutePath());
     QFile f(path);
     if (f.open(QIODevice::Append | QIODevice::Text)) {
         f.write(line.toUtf8());
@@ -592,312 +620,444 @@ void MainWindow::appendScoreHistoryLine(const QString& line) const {
     }
 }
 
-void MainWindow::onContestEnded(int mode) {
-    // Phase F: the WPX-flavoured submission ScoreDialog. Pascal
-    // Main.PopupScoreWpx builds:
-    //   "YYYY-MM-DD <call> <pts> <mult> [<CRC32>]"
-    // where the CRC32 seed is 0xC90C2086 and the inner string ends
-    // with a trailing space (matches Pascal's Format directive).
+void MainWindow::onContestEnded(int mode, bool stoppedByUser) {
+    // Pascal Contest.GetAudio end-of-run block:
+    //   HST            → Run(rmStop); PopupScoreHst   (timer or Stop)
+    //   WPX, timer ran → Run(rmStop); PopupScoreWpx
+    //   anything else  → Run(rmStop)
     using mr::sim::RunMode;
     const auto runMode = static_cast<RunMode>(mode);
+    setRunning(static_cast<int>(RunMode::Stop));
 
-    // Read MyCall from the right-panel edit so we don't need a sim
-    // round-trip to know what the user just submitted as.
+    mr::persistence::Settings settings;
     QString myCall;
     if (auto* rp = rightPanel_; rp != nullptr && rp->callEdit() != nullptr) {
         myCall = rp->callEdit()->text();
     }
 
-    const QString dateStr =
-        QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
-
-    // Pascal Main.PopupScoreWpx fires for every non-HST mode. HST
-    // gets the bare Score message box (PopupScoreHst). Single Calls
-    // scores by Pts × Mul same as Pile-Up / WPX, so it joins the
-    // submission-string dialog.
-    if (runMode != RunMode::Hst) {
-        const QString inner = QStringLiteral("%1 %2 %3 %4 ")
-            .arg(dateStr, myCall,
-                 QString::number(scoreVerified_),
-                 QString::number(verifiedPrefixes_.size()));
-        const std::uint32_t crc = mr::scoring::calculateCrc32(
-            inner.toStdString(),
-            static_cast<std::uint32_t>(0xC90C2086U));
-        const QString stamped = inner + QStringLiteral("[%1]")
-            .arg(crc, 8, 16, QChar('0')).toUpper();
-
-        // Persist the submission line to the per-user history file so
-        // File → View Score Table can show past sessions.
-        appendScoreHistoryLine(stamped);
-
-        mr::persistence::Settings settings;
-        const int prevHi = settings.hiScore();
-        const int finalScore = scoreVerified_
-                               * static_cast<int>(verifiedPrefixes_.size());
-        const bool newHi = (finalScore > prevHi);
-        if (newHi) {
-            settings.setHiScore(finalScore);
-        }
-
-        ScoreDialog dlg(stamped, newHi, this);
-        dlg.exec();
-    } else {
-        // HST / Single / other modes: simpler readout — Pascal's
-        // PopupScoreHst just shows the score in a plain message box.
-        QMessageBox::information(this,
-            QStringLiteral("Contest finished"),
-            QStringLiteral("Score: %1").arg(scoreVerified_));
+    if (runMode == RunMode::Hst) {
+        // PopupScoreHst: append "yyyy-mm-dd hh:nn<TAB>Call<TAB>Name<TAB>Score"
+        // to HstResults.txt, then ShowMessage('HST Score: ' + verified).
+        const auto st = log_.stats(true);
+        const QString line = QStringLiteral("%1\t%2\t%3\t%4")
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd hh:mm")),
+                 myCall, settings.hamName(), QString::number(st.verified.score));
+        appendLine(hstResultsPath(), line);
+        QMessageBox::information(this, QStringLiteral("Morse Runner"),
+                                 QStringLiteral("HST Score: %1").arg(st.verified.score));
+        return;
     }
-}
+    if (runMode != RunMode::Wpx || stoppedByUser) {
+        return;
+    }
 
-// (Previously housed `extractPrefixSimple` here. Replaced by the full
-// Pascal-faithful `mr::scoring::extractPrefix` — see
-// `src/scoring/ExtractPrefix.h`.)
+    // PopupScoreWpx: "yyyy-mm-dd <call> <verified pts> <verified mult> "
+    // + "[CRC32]" with seed 0xC90C2086; append to the .lst history.
+    const auto st = log_.stats(false);
+    const QString inner = QStringLiteral("%1 %2 %3 %4 ")
+        .arg(QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")), myCall,
+             QString::number(st.verified.pts), QString::number(st.verified.mul));
+    const std::uint32_t crc = mr::scoring::calculateCrc32(
+        inner.toStdString(), static_cast<std::uint32_t>(0xC90C2086U));
+    const QString stamped = inner + QStringLiteral("[%1]").arg(crc, 8, 16, QChar('0')).toUpper();
+    appendLine(scoreHistoryPath(), stamped);
+
+    const int score = st.verified.score;
+    const int prevHi = settings.hiScore();
+    const bool newHi = score > prevHi;
+    if (newHi) {
+        settings.setHiScore(score);
+    }
+    ScoreDialog dlg(stamped, newHi, this);
+    dlg.exec();
+}
 
 void MainWindow::onDxQsoCompleted(const QString& call, int rst, int nr,
                                   float /*minute*/) {
-    // Sim thread is telling us a DX station reached Done. Store the
-    // truth keyed by uppercase call so the next Enter press can
-    // validate against it.
-    truthByCall_.insert(call.toUpper(), DxTruth{rst, nr});
-}
-
-namespace {
-
-void setScoreCell(QLabel* lbl, int v) {
-    if (lbl != nullptr) {
-        lbl->setText(QString::number(v));
+    // Pascal Contest.GetAudio: the DX matching the last QSO hands over
+    // its record (DataToLastQso); the last log line is deleted, CheckErr
+    // runs again, the line is redrawn and the stats recomputed.
+    if (log_.applyTruth(call.toStdString(), rst, nr)) {
+        showLastQso(true);
     }
 }
 
-}  // namespace
-
-void MainWindow::keyPressEvent(QKeyEvent* event) {
-    // Pascal Main.pas FormKeyDown bindings. Function keys land on the
-    // QAction shortcuts already; here we handle the rest.
-    const auto key = event->key();
-    const auto mods = event->modifiers();
-
-    // Space: focus round-robin through Call → RST → Nr → Call.
-    if (key == Qt::Key_Space && mods == Qt::NoModifier
-        && bottomPanel_ != nullptr) {
-        QLineEdit* edits[3] = {
-            bottomPanel_->callEdit(),
-            bottomPanel_->rstEdit(),
-            bottomPanel_->nrEdit()};
-        QWidget* fw = focusWidget();
-        int next = 0;
-        for (int i = 0; i < 3; ++i) {
-            if (edits[i] == fw) {
-                next = (i + 1) % 3;
-                break;
-            }
-        }
-        if (edits[next] != nullptr) {
-            edits[next]->setFocus();
-        }
-        event->accept();
-        return;
-    }
-
-    // Esc: abort the player's transmission.
-    if (key == Qt::Key_Escape && mods == Qt::NoModifier) {
-        emit abortSendRequested();
-        event->accept();
-        return;
-    }
-
-    // F11 / Ctrl-W / Alt-W: wipe entry fields.
-    if ((key == Qt::Key_F11 && mods == Qt::NoModifier)
-        || (key == Qt::Key_W && (mods == Qt::ControlModifier
-                                 || mods == Qt::AltModifier))) {
-        if (bottomPanel_ != nullptr) {
-            if (auto* c = bottomPanel_->callEdit()) c->clear();
-            if (auto* r = bottomPanel_->rstEdit())  r->clear();
-            if (auto* n = bottomPanel_->nrEdit())   n->clear();
-            if (auto* c = bottomPanel_->callEdit()) c->setFocus();
-        }
-        event->accept();
-        return;
-    }
-
-    // Up / Down: RIT ±50 Hz.
-    if ((key == Qt::Key_Up || key == Qt::Key_Down)
-        && mods == Qt::NoModifier && bottomPanel_ != nullptr) {
-        if (auto* rs = bottomPanel_->ritSlider(); rs != nullptr) {
-            const int delta = (key == Qt::Key_Up) ? 50 : -50;
-            rs->setRitHz(rs->ritHz() + delta);
-        }
-        event->accept();
-        return;
-    }
-
-    // `.`, `+`, `[`: send F3 (TU) and immediately save the QSO. Pascal
-    // combines the TU send and the SaveQso into one keystroke as the
-    // common close-the-QSO shortcut.
-    if (mods == Qt::NoModifier
-        && (key == Qt::Key_Period
-            || key == Qt::Key_Plus
-            || key == Qt::Key_BracketLeft)) {
-        emit sendMessageRequested(static_cast<int>(mr::sim::Message::Tu));
-        onSaveQsoRequested();
-        event->accept();
-        return;
-    }
-
-    QMainWindow::keyPressEvent(event);
+bool MainWindow::hstMode() const noexcept {
+    return runMode_ == static_cast<int>(mr::sim::RunMode::Hst);
 }
 
-void MainWindow::onSaveQsoRequested() {
-    // E.G4 minimum-viable QSO logging. The Pascal Log.pas pipeline
-    // does call-vs-truth validation against the DxStation that just
-    // finished — we don't have CompletedQso back-fill plumbed end-to-end
-    // yet, so this writes the player's entered values with an empty
-    // error tag. Phase F replaces the placeholder tag with the
-    // checked-and-scored result.
-    if (bottomPanel_ == nullptr || logView_ == nullptr) {
+void MainWindow::showLastQso(bool replaceRow) {
+    if (log_.empty() || logView_ == nullptr) {
+        return;
+    }
+    // Me.Rst is always 599 for the player.
+    const QString row = QString::fromStdString(log_.formatRow(log_.qsos().size() - 1, 599));
+    if (replaceRow) {
+        logView_->replaceLastQsoRow(row);
+    } else {
+        logView_->appendQsoRow(row, row.right(3));
+    }
+    refreshStats();
+}
+
+void MainWindow::refreshStats() {
+    // Pascal UpdateStats / UpdateStatsHst.
+    const bool hst = hstMode();
+    const auto st = log_.stats(hst);
+    auto set = [this](int r, int c, const QString& v) {
+        if (auto* lbl = bottomPanel_->scoreCell(r, c)) {
+            lbl->setText(v);
+        }
+    };
+    if (hst) {
+        set(0, 0, {});
+        set(1, 0, {});
+        set(0, 1, {});
+        set(1, 1, {});
+        set(2, 0, QString::number(st.raw.score));
+        set(2, 1, QString::number(st.verified.score));
+        bottomPanel_->setHstScore(st.verified.score);
+    } else {
+        set(0, 0, QString::number(st.raw.pts));
+        set(1, 0, QString::number(st.raw.mul));
+        set(2, 0, QString::number(st.raw.score));
+        set(0, 1, QString::number(st.verified.pts));
+        set(1, 1, QString::number(st.verified.mul));
+        set(2, 1, QString::number(st.verified.score));
+    }
+    if (auto* hist = bottomPanel_->histogramPanel()) {
+        hist->setAllBins(log_.histogram());
+    }
+}
+
+void MainWindow::refreshRateAndHistogram() {
+    // Pascal ShowRate (no label change until time has elapsed).
+    if (const auto r = log_.rate(elapsedSeconds_); r.has_value()) {
+        if (auto* rate = bottomPanel_->rateLabel()) {
+            rate->setText(QStringLiteral("%1  qso/hr.").arg(*r));
+        }
+    }
+}
+
+// ─── Main.pas operating logic ───────────────────────────────────────────
+
+void MainWindow::sendMsg(int message) {
+    // Pascal TMainForm.SendMsg: HisCall keys the Call box (when not
+    // empty) and sets CallSent; NR sets NrSent.
+    using mr::sim::Message;
+    const auto m = static_cast<Message>(message);
+    QString callField;
+    if (m == Message::HisCall) {
+        callField = bottomPanel_->callEdit()->text();
+        callSent_ = true;
+        // Edits typed before this send are already reflected in it;
+        // ignore their late UpdateCallInMessage answers.
+        ignoredCallEditResults_ = pendingCallEditResults_;
+    }
+    if (m == Message::Nr) {
+        nrSent_ = true;
+    }
+    emit sendMessageRequested(message, callField);
+}
+
+void MainWindow::wipeBoxes() {
+    // Pascal TMainForm.WipeBoxes.
+    bottomPanel_->callEdit()->clear();
+    bottomPanel_->rstEdit()->clear();
+    bottomPanel_->nrEdit()->clear();
+    bottomPanel_->callEdit()->setFocus();
+    callSent_ = false;
+    nrSent_ = false;
+}
+
+void MainWindow::processSpace() {
+    // Pascal TMainForm.ProcessSpace: Call → Nr, RST → Nr (filling an
+    // empty RST with 599), Nr → Call.
+    mustAdvance_ = false;
+    auto* call = bottomPanel_->callEdit();
+    auto* rst = bottomPanel_->rstEdit();
+    auto* nr = bottomPanel_->nrEdit();
+    QWidget* fw = focusWidget();
+    if (fw == call || fw == rst) {
+        if (rst->text().isEmpty()) {
+            rst->setText(QStringLiteral("599"));
+        }
+        nr->setFocus();
+    } else {
+        call->setFocus();
+    }
+}
+
+void MainWindow::processEnter(bool forceSave) {
+    // Pascal TMainForm.ProcessEnter — ESM (Enter Sends Messages).
+    using mr::sim::Message;
+    mustAdvance_ = false;
+
+    // Ctrl / Shift / Alt + Enter: save only.
+    if (forceSave) {
+        saveQso();
+        return;
+    }
+    // No QSO in progress: send CQ.
+    if (bottomPanel_->callEdit()->text().isEmpty()) {
+        sendMsg(static_cast<int>(Message::Cq));
+        return;
+    }
+
+    const bool c = callSent_;
+    const bool n = nrSent_;
+    const bool r = !bottomPanel_->nrEdit()->text().isEmpty();
+
+    // Send his call if not sent before, or if the call changed.
+    if (!c || (!n && !r)) {
+        sendMsg(static_cast<int>(Message::HisCall));
+    }
+    if (!n) {
+        sendMsg(static_cast<int>(Message::Nr));
+    }
+    if (n && !r) {
+        sendMsg(static_cast<int>(Message::Qm));
+    }
+
+    if (r && (c || n)) {
+        sendMsg(static_cast<int>(Message::Tu));
+        saveQso();
+    } else {
+        mustAdvance_ = true;
+    }
+}
+
+void MainWindow::onPlayerPieceFinished() {
+    // Pascal TMainForm.Advance.
+    if (!mustAdvance_) {
         return;
     }
     auto* call = bottomPanel_->callEdit();
-    auto* rst  = bottomPanel_->rstEdit();
-    auto* nr   = bottomPanel_->nrEdit();
-    if (call == nullptr || rst == nullptr || nr == nullptr) {
-        return;
+    auto* rst = bottomPanel_->rstEdit();
+    if (rst->text().isEmpty()) {
+        rst->setText(QStringLiteral("599"));
     }
-    const QString callText = call->text().trimmed();
-    if (callText.isEmpty()) {
-        return;
-    }
-
-    // Pascal Log.pas::LastQsoToScreen row format:
-    //   ' hh:nn:ss  %-12s  %.3d %.4d  %.3d %.4d  %-5s  %-3s'
-    // Column order is Recv (rcvdRst rcvdNr) then Sent (player hard-codes
-    // 599 0001 until the scoring engine is in). Received RST/NR come
-    // from the entry fields.
-    const QTime now = QTime::currentTime();
-    const QString timeStr = now.toString(QStringLiteral("HH:mm:ss"));
-    const int rcvdRst = rst->text().toInt();
-    const int rcvdNr  = nr->text().toInt();
-    // Pascal WPX uses ExtractPrefix for the multiplier column;
-    // HST repurposes the Pref column to show the per-QSO CallToScore
-    // value (the WPX multiplier doesn't apply to HST). The full
-    // Pascal-faithful ExtractPrefix lives in scoring/ExtractPrefix.h.
-    const bool isHst =
-        currentRunMode_ == static_cast<int>(mr::sim::RunMode::Hst);
-    const QString wpxPrefix = QString::fromStdString(
-        mr::scoring::extractPrefix(callText.toStdString()));
-    const int callPts = mr::scoring::callToScore(callText.toStdString());
-    const QString displayPref = isHst
-        ? QString::number(callPts)
-        : wpxPrefix;
-
-    // Chk-column validation. Pascal CheckErr writes:
-    //   DUP — call already logged this session
-    //   NIL — no DX with this call has completed (we never heard it)
-    //   RST — call/NR matched but RST differed
-    //   NR  — call/RST matched but NR differed
-    //   "   " — clean (verified)
-    const QString upperCall = callText.toUpper();
-    QString tag = QStringLiteral("   ");
-    bool verified = false;
-    if (loggedCalls_.contains(upperCall)) {
-        tag = QStringLiteral("DUP");
-    } else if (!truthByCall_.contains(upperCall)) {
-        tag = QStringLiteral("NIL");
+    if (!call->text().contains(QLatin1Char('?'))) {
+        bottomPanel_->nrEdit()->setFocus();
+    } else if (focusWidget() == call) {
+        selectCallQuestionMark();
     } else {
-        const auto truth = truthByCall_.value(upperCall);
-        const bool rstOk = (rcvdRst == truth.rst);
-        const bool nrOk  = (rcvdNr  == truth.nr);
-        if (rstOk && nrOk) {
-            verified = true;          // clean — counts toward Verified score
-        } else if (!rstOk && nrOk) {
-            tag = QStringLiteral("RST");
-        } else if (rstOk && !nrOk) {
-            tag = QStringLiteral("NR ");
-        } else {
-            tag = QStringLiteral("NR ");
-        }
+        call->setFocus();
     }
+    mustAdvance_ = false;
+}
 
-    const QString row = QStringLiteral(" %1  %2  %3 %4  599 0001  %5  ")
-        .arg(timeStr)
-        .arg(callText, -12)
-        .arg(rcvdRst, 3, 10, QChar('0'))
-        .arg(rcvdNr, 4, 10, QChar('0'))
-        .arg(displayPref, -5);
-    logView_->appendQsoRow(row, tag);
+void MainWindow::selectCallQuestionMark() {
+    // Pascal Edit1Enter: select the first '?' (unless it is the first
+    // character) so typing replaces it.
+    auto* call = bottomPanel_->callEdit();
+    const auto p = call->text().indexOf(QLatin1Char('?'));
+    if (p > 0) {
+        call->setSelection(static_cast<int>(p), 1);
+    }
+}
 
-    // Mode-aware scoring (Pascal Log.pas UpdateStats vs UpdateStatsHst).
-    //
-    //   WPX (Pile-Up, Single, Wpx)  →  Pts = QSO count
-    //                                  Mul = unique-prefix count
-    //                                  Score = Pts × Mul
-    //   HST                          →  Pts = sum of CallToScore
-    //                                  Mul = blank/0
-    //                                  Score = Pts (no multiplier)
-    //
-    // Both columns (Raw / Verified) follow the same rule; Verified
-    // counts only QSOs with a clean Chk tag.
-    if (tag != QStringLiteral("DUP")) {
-        loggedCalls_.insert(upperCall);
-        if (isHst) {
-            scoreRaw_ += callPts;
-        } else {
-            ++scoreRaw_;
-            if (!wpxPrefix.isEmpty()) {
-                rawPrefixes_.insert(wpxPrefix);
-            }
-        }
-        if (verified) {
-            ++verifiedQsos_;
-            if (isHst) {
-                scoreVerified_ += callPts;
-            } else {
-                ++scoreVerified_;
-                if (!wpxPrefix.isEmpty()) {
-                    verifiedPrefixes_.insert(wpxPrefix);
+void MainWindow::onCallEditResult(const QString& /*callField*/, bool applied) {
+    // Pascal Edit1Change: if not Tst.Me.UpdateCallInMessage(...) then
+    // CallSent := false.
+    if (pendingCallEditResults_ > 0) {
+        --pendingCallEditResults_;
+    }
+    if (ignoredCallEditResults_ > 0) {
+        --ignoredCallEditResults_;
+        return;
+    }
+    if (!applied) {
+        callSent_ = false;
+    }
+}
+
+void MainWindow::onSendAborted(bool hadHisCall, bool hadNr) {
+    // Pascal FormKeyPress #27: clear the flags for whatever was being
+    // (or was last) sent.
+    if (hadHisCall) {
+        callSent_ = false;
+    }
+    if (hadNr) {
+        nrSent_ = false;
+    }
+}
+
+void MainWindow::saveQso() {
+    // Pascal Log.SaveQso (GUI half; the DX lookup and Inc(Me.NR) run
+    // on the sim thread via qsoLogged).
+    auto* call = bottomPanel_->callEdit();
+    auto* rst = bottomPanel_->rstEdit();
+    auto* nr = bottomPanel_->nrEdit();
+    const std::string callText = call->text().toStdString();
+    if (!mr::scoring::QsoLog::entryIsValid(callText, rst->text().toStdString(),
+                                           nr->text().toStdString())) {
+        QApplication::beep();
+        return;
+    }
+    const auto& q = log_.add(elapsedSeconds_, callText, rst->text().toInt(),
+                             nr->text().toInt(), hstMode());
+    const QString loggedCall = QString::fromStdString(q.call);
+    showLastQso(false);
+    emit qsoLogged(loggedCall);
+    wipeBoxes();
+}
+
+void MainWindow::incSpeed() {
+    // Pascal IncSpeed: next multiple of 5 up, clamped 10..120.
+    auto* spin = rightPanel_->wpmSpin();
+    const int wpm = (spin->value() / 5) * 5 + 5;
+    spin->setValue(std::clamp(wpm, 10, 120));
+}
+
+void MainWindow::decSpeed() {
+    // Pascal DecSpeed: previous multiple of 5 down, clamped 10..120.
+    auto* spin = rightPanel_->wpmSpin();
+    const int wpm = ((spin->value() + 4) / 5) * 5 - 5;
+    spin->setValue(std::clamp(wpm, 10, 120));
+}
+
+void MainWindow::stepBandwidth(int delta) {
+    // Pascal SetBw(ComboBox2.ItemIndex ± 1): ignored outside the list.
+    auto* combo = rightPanel_->bandwidthCombo();
+    const int idx = combo->currentIndex() + delta;
+    if (idx >= 0 && idx < combo->count()) {
+        combo->setCurrentIndex(idx);
+    }
+}
+
+void MainWindow::incRit(int step) {
+    // Pascal IncRit: -1 / +1 move 50 Hz, 0 resets; clamped ±500.
+    if (auto* rs = bottomPanel_->ritSlider(); rs != nullptr) {
+        const int hz = (step == 0) ? 0 : rs->ritHz() + step * 50;
+        rs->setRitHz(std::clamp(hz, -500, 500));
+    }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // Pascal KeyPreview: FormKeyPress / FormKeyDown see every key in the
+    // window before the focused control.
+    if (event->type() == QEvent::FocusIn && bottomPanel_ != nullptr) {
+        // Pascal Edit1Enter / Edit2Enter (AutoSelect is off). Deferred
+        // so it lands after QLineEdit's own focus-in selection.
+        if (watched == bottomPanel_->callEdit()) {
+            QTimer::singleShot(0, this, [this]() { selectCallQuestionMark(); });
+        } else if (watched == bottomPanel_->rstEdit()) {
+            QTimer::singleShot(0, this, [this]() {
+                auto* rst = bottomPanel_->rstEdit();
+                if (rst->text().size() == 3) {
+                    rst->setSelection(1, 1);
                 }
-            }
+            });
         }
+        return false;
     }
-    if (isHst) {
-        // Pascal: Items[0].SubItems := ''; Items[1].SubItems := '';
-        // Items[2] = Score. We show the raw/verified Pts (sum of
-        // CallToScore) on the Score row directly.
-        setScoreCell(bottomPanel_->scoreCell(0, 0), 0);
-        setScoreCell(bottomPanel_->scoreCell(0, 1), 0);
-        setScoreCell(bottomPanel_->scoreCell(1, 0), 0);
-        setScoreCell(bottomPanel_->scoreCell(1, 1), 0);
-        setScoreCell(bottomPanel_->scoreCell(2, 0), scoreRaw_);
-        setScoreCell(bottomPanel_->scoreCell(2, 1), scoreVerified_);
-    } else {
-        const int rawMult = static_cast<int>(rawPrefixes_.size());
-        const int verMult = static_cast<int>(verifiedPrefixes_.size());
-        setScoreCell(bottomPanel_->scoreCell(0, 0), scoreRaw_);
-        setScoreCell(bottomPanel_->scoreCell(0, 1), scoreVerified_);
-        setScoreCell(bottomPanel_->scoreCell(1, 0), rawMult);
-        setScoreCell(bottomPanel_->scoreCell(1, 1), verMult);
-        setScoreCell(bottomPanel_->scoreCell(2, 0), scoreRaw_ * rawMult);
-        setScoreCell(bottomPanel_->scoreCell(2, 1), scoreVerified_ * verMult);
+    if (event->type() != QEvent::KeyPress) {
+        return false;
     }
-
-    // Histogram bin: each bin covers kHistogramBinMinutes (5 by
-    // default). Pascal Histo[i] is bumped from PaintHisto when a QSO
-    // is logged within the corresponding minute window.
-    ++totalLoggedQsos_;
-    if (auto* hist = bottomPanel_->histogramPanel(); hist != nullptr) {
-        using namespace mr::constants::Ui;
-        const int minute = sessionSeconds_ / 60;
-        const int bin = std::clamp(minute / kHistogramBinMinutes,
-                                   0, kHistogramBins - 1);
-        ++histogramBins_[static_cast<std::size_t>(bin)];
-        hist->setBinCount(bin, histogramBins_[static_cast<std::size_t>(bin)]);
+    auto* w = qobject_cast<QWidget*>(watched);
+    if (w == nullptr || w->window() != this || bottomPanel_ == nullptr) {
+        return false;
+    }
+    using mr::sim::Message;
+    auto* ke = static_cast<QKeyEvent*>(event);
+    int key = ke->key();
+    // macOS: Qt::ControlModifier is Cmd and Qt::MetaModifier is the
+    // Control key. Pascal's "Ctrl" accepts either here (several Ctrl
+    // combos, e.g. Ctrl-Up, are taken by macOS itself).
+    const auto mods = ke->modifiers() & ~Qt::KeypadModifier;
+    const bool ctrl = (mods & (Qt::ControlModifier | Qt::MetaModifier)) != 0;
+    const bool alt = (mods & Qt::AltModifier) != 0;
+    const bool shift = (mods & Qt::ShiftModifier) != 0;
+    // Option-W can arrive as the composed character ("∑"); match the
+    // physical W key (kVK_ANSI_W = 13) instead.
+    constexpr quint32 kMacVirtualKeyW = 13;
+    if ((alt || ctrl) && ke->nativeVirtualKey() == kMacVirtualKeyW) {
+        key = Qt::Key_W;
     }
 
-    call->clear();
-    rst->clear();
-    nr->clear();
-    call->setFocus();
+    // ── FormKeyDown (virtual keys) ──
+    switch (key) {
+        case Qt::Key_Insert:                       // <his> <#>
+            sendMsg(static_cast<int>(Message::HisCall));
+            sendMsg(static_cast<int>(Message::Nr));
+            return true;
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+            processEnter(ctrl || shift || alt);
+            return true;
+        case Qt::Key_F11:
+            wipeBoxes();
+            return true;
+        case Qt::Key_W:
+            if (alt || ctrl) {                     // Alt-W, ^W
+                wipeBoxes();
+                return true;
+            }
+            break;
+        case Qt::Key_Up:
+        case Qt::Key_Down: {
+            const int dir = (key == Qt::Key_Up) ? 1 : -1;
+            if (!ctrl) {
+                incRit(dir);
+            } else if (!hstMode()) {
+                stepBandwidth(dir);
+            }
+            return true;
+        }
+        case Qt::Key_PageUp:
+            incSpeed();
+            return true;
+        case Qt::Key_PageDown:
+            decSpeed();
+            return true;
+        case Qt::Key_F9:
+        case Qt::Key_F10:
+            if (alt || ctrl) {
+                (key == Qt::Key_F10) ? incSpeed() : decSpeed();
+                return true;
+            }
+            break;
+        case Qt::Key_Escape: {                     // FormKeyPress #27
+            emit abortSendRequested();
+            return true;
+        }
+        default:
+            break;
+    }
+
+    // ── FormKeyPress (characters) ──
+    if (ctrl || alt) {
+        return false;
+    }
+    const QString text = ke->text();
+    if (text.size() != 1) {
+        return false;
+    }
+    switch (text.at(0).unicode()) {
+        case ';':                                  // <his> <#>
+            sendMsg(static_cast<int>(Message::HisCall));
+            sendMsg(static_cast<int>(Message::Nr));
+            return true;
+        case '.':
+        case '+':
+        case '[':
+        case ',':                                  // TU & save
+            if (!callSent_) {
+                sendMsg(static_cast<int>(Message::HisCall));
+            }
+            sendMsg(static_cast<int>(Message::Tu));
+            saveQso();
+            return true;
+        case ' ':
+            processSpace();
+            return true;
+        case '\\':                                 // = F1
+            sendMsg(static_cast<int>(Message::Cq));
+            return true;
+        default:
+            return false;
+    }
 }
 
 // ─── Phase-E action accessors ───────────────────────────────────────
@@ -944,70 +1104,31 @@ void MainWindow::wireMenuFanouts() {
     using mr::sim::Message;
     using mr::sim::RunMode;
 
-    // Run-mode menu items → runModeRequested + enable/disable Stop.
-    // Pascal: Stop starts disabled at startup; selecting any run mode
-    // enables it, and Stop disables itself when clicked.
-    auto enterRunMode = [this](int mode) {
-        // Cache the just-selected mode so onSaveQsoRequested can
-        // branch Pascal-style scoring (HST = CallToScore sum; others
-        // = QSO count × prefix multiplier) without a sim round-trip.
-        currentRunMode_ = mode;
-        // Pascal Main.pas: starting a Run clears the prior session's
-        // counters so the new contest begins from zero. The log pane
-        // is preserved across Stop (per parity) but reset here on a
-        // fresh start. Stop itself leaves the score visible so the
-        // user can read their final tally — opposite of where we had
-        // the reset before.
-        sessionSeconds_ = 0;
-        totalLoggedQsos_ = 0;
-        verifiedQsos_ = 0;
-        scoreRaw_ = 0;
-        scoreVerified_ = 0;
-        rawPrefixes_.clear();
-        verifiedPrefixes_.clear();
-        loggedCalls_.clear();
-        truthByCall_.clear();
-        histogramBins_.fill(0);
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 2; ++c) {
-                if (auto* lbl = bottomPanel_->scoreCell(r, c)) {
-                    lbl->setText(QStringLiteral("0"));
-                }
-            }
-        }
-        if (auto* rate = bottomPanel_->rateLabel()) {
-            rate->setText(QStringLiteral("0  qso/hr."));
-        }
-        if (auto* clk = bottomPanel_->clockLabel()) {
-            clk->setText(QStringLiteral("00:00:00"));
-        }
-        if (auto* hist = bottomPanel_->histogramPanel()) {
-            hist->clear();
-        }
-        if (auto* lv = logView_) {
-            lv->clear();
-        }
-        emit runModeRequested(mode);
-        menus_->runStop->setEnabled(true);
-    };
-    connect(menus_->runPileUp,      &QAction::triggered, this,
-            [enterRunMode]() { enterRunMode(static_cast<int>(RunMode::PileUp)); });
-    connect(menus_->runSingleCalls, &QAction::triggered, this,
-            [enterRunMode]() { enterRunMode(static_cast<int>(RunMode::Single)); });
-    connect(menus_->runWpx,         &QAction::triggered, this,
-            [enterRunMode]() { enterRunMode(static_cast<int>(RunMode::Wpx)); });
-    connect(menus_->runHst,         &QAction::triggered, this,
-            [enterRunMode]() { enterRunMode(static_cast<int>(RunMode::Hst)); });
-    connect(menus_->runStop,        &QAction::triggered, this,
-            [this]() {
-                // Pascal parity: Stop preserves the score / histogram /
-                // clock / log so the user can review the just-finished
-                // session. Counters reset only when a new Run starts.
-                emit runModeRequested(static_cast<int>(RunMode::Stop));
-                menus_->runStop->setEnabled(false);
-            });
+    // Pascal RunMNUClick → Run(Tag); StopMNUClick → Tst.FStopPressed.
+    auto run = [this](RunMode m) { setRunning(static_cast<int>(m)); };
+    connect(menus_->runPileUp, &QAction::triggered, this, [run]() { run(RunMode::PileUp); });
+    connect(menus_->runSingleCalls, &QAction::triggered, this, [run]() { run(RunMode::Single); });
+    connect(menus_->runWpx, &QAction::triggered, this, [run]() { run(RunMode::Wpx); });
+    connect(menus_->runHst, &QAction::triggered, this, [run]() { run(RunMode::Hst); });
+    connect(menus_->runStop, &QAction::triggered, this, [this]() { emit stopRequested(); });
 
-    // Send menu (each F-key) → sendMessageRequested
+    // Pascal RunBtnClick: Pile-Up when stopped, else FStopPressed.
+    if (auto* rb = rightPanel_->runButton(); rb != nullptr) {
+        connect(rb, &QToolButton::clicked, this, [this]() {
+            if (runMode_ == static_cast<int>(mr::sim::RunMode::Stop)) {
+                setRunning(static_cast<int>(mr::sim::RunMode::PileUp));
+            } else {
+                emit stopRequested();
+            }
+            // Pascal SetToolbuttonDown: the button is "down" exactly
+            // while a run is going; undo Qt's click toggle.
+            if (auto* b = rightPanel_->runButton()) {
+                b->setChecked(runMode_ != static_cast<int>(mr::sim::RunMode::Stop));
+            }
+        });
+    }
+
+    // Send menu (F1..F8) → SendClick → SendMsg.
     static constexpr Message kSendMap[8] = {
         Message::Cq,  Message::Nr,  Message::Tu,    Message::MyCall,
         Message::HisCall, Message::B4, Message::Qm, Message::Nil,
@@ -1016,22 +1137,120 @@ void MainWindow::wireMenuFanouts() {
         if (auto* a = sendAction(i); a != nullptr) {
             const Message m = kSendMap[i];
             connect(a, &QAction::triggered, this,
-                    [this, m]() { emit sendMessageRequested(static_cast<int>(m)); });
+                    [this, m]() { sendMsg(static_cast<int>(m)); });
         }
     }
 
-    // Settings → toggled signals
-    connect(menus_->settingsQrn,     &QAction::toggled, this, &MainWindow::qrnToggled);
-    connect(menus_->settingsQrm,     &QAction::toggled, this, &MainWindow::qrmToggled);
-    connect(menus_->settingsQsb,     &QAction::toggled, this, &MainWindow::qsbToggled);
-    connect(menus_->settingsFlutter, &QAction::toggled, this, &MainWindow::flutterToggled);
-    connect(menus_->settingsLids,    &QAction::toggled, this, &MainWindow::lidsToggled);
-    connect(menus_->settingsQsk,     &QAction::toggled, this, &MainWindow::qskToggled);
+    // Settings toggles (QRN/QRM/QSB/Flutter/LIDs/QSK) emit their
+    // *Toggled signals via the checkbox bridge in wireCheckBoxSync —
+    // connecting the actions here as well would emit every change twice.
+}
+
+void MainWindow::setRunning(int mode) {
+    // Pascal TMainForm.Run(Value).
+    using mr::sim::RunMode;
+    if (mode == runMode_) {
+        return;
+    }
+    const auto value = static_cast<RunMode>(mode);
+    const bool bStop = value == RunMode::Stop;
+    const bool bCompet = value == RunMode::Wpx || value == RunMode::Hst;
+    const bool hst = value == RunMode::Hst;
+    runMode_ = mode;
+    auto* rp = rightPanel_;
+
+    // Main controls.
+    rp->callEdit()->setEnabled(bStop);
+    rp->durationSpin()->setEnabled(bStop);
+    if (auto* rb = rp->runButton()) {
+        rb->setChecked(!bStop);
+    }
+
+    // Band-condition checkboxes: fixed in competition modes.
+    for (QCheckBox* cb : {rp->qsbCheckBox(), rp->qrmCheckBox(), rp->qrnCheckBox(),
+                          rp->flutterCheckBox(), rp->lidsCheckBox()}) {
+        cb->setEnabled(!bCompet);
+        if (bCompet) {
+            cb->setChecked(value == RunMode::Wpx);
+        }
+    }
+    if (bCompet) {
+        rp->durationSpin()->setValue(competitionDuration_);
+    }
+
+    // Run menu and Run-button popup share these actions.
+    for (QAction* a : {menus_->runPileUp, menus_->runSingleCalls, menus_->runWpx,
+                       menus_->runHst}) {
+        a->setEnabled(bStop);
+    }
+    menus_->runStop->setEnabled(!bStop);
+
+    menus_->settingsCall->setEnabled(bStop);
+    menus_->durationMenu->setEnabled(bStop);
+    for (QAction* a : {menus_->settingsQrn, menus_->settingsQrm, menus_->settingsQsb,
+                       menus_->settingsFlutter, menus_->settingsLids}) {
+        a->setEnabled(!bCompet);
+    }
+
+    // HST specifics: Activity fixed at 4, bandwidth at 600 Hz.
+    menus_->activityMenu->setEnabled(!hst);
+    menus_->cwBandwidthMenu->setEnabled(!hst);
+    rp->activitySpin()->setEnabled(!hst);
+    if (hst) {
+        rp->activitySpin()->setValue(4);
+    }
+    rp->bandwidthCombo()->setEnabled(!hst);
+    if (hst) {
+        rp->bandwidthCombo()->setCurrentIndex(10);
+    }
+
+    if (hst) {
+        bottomPanel_->setScoreTableVisible(false);
+    } else if (!bStop) {
+        bottomPanel_->setScoreTableVisible(true);
+    }
+
+    // Mode caption: red for competitions, green otherwise.
+    if (auto* lbl = bottomPanel_->modeLabel(); lbl != nullptr) {
+        switch (value) {
+            case RunMode::PileUp: lbl->setText(QStringLiteral("Pile-Up"));      break;
+            case RunMode::Single: lbl->setText(QStringLiteral("Single Calls")); break;
+            case RunMode::Wpx:    lbl->setText(QStringLiteral("COMPETITION"));  break;
+            case RunMode::Hst:    lbl->setText(QStringLiteral("H S T"));        break;
+            case RunMode::Stop:   lbl->clear();                                 break;
+        }
+        QPalette pal = lbl->palette();
+        pal.setColor(QPalette::WindowText, bCompet ? QColor(Qt::red) : QColor(0, 0x80, 0));
+        lbl->setPalette(pal);
+    }
+
+    if (!bStop) {
+        // Tst.Me.AbortSend; BlockNumber := 0; Me.Nr := 1 (sim side);
+        // Log.Clear; WipeBoxes; IncRit(0).
+        lastRunMode_ = mode;
+        log_.clear();
+        if (logView_ != nullptr) {
+            logView_->setHeader(hst ? LogView::HeaderStyle::HstScore
+                                    : LogView::HeaderStyle::WpxPrefix);
+        }
+        const QString empty = hst ? QString() : QStringLiteral("0");
+        for (int c = 0; c < 2; ++c) {
+            if (auto* l = bottomPanel_->scoreCell(0, c)) l->setText(empty);
+            if (auto* l = bottomPanel_->scoreCell(1, c)) l->setText(empty);
+            if (auto* l = bottomPanel_->scoreCell(2, c)) l->setText(QStringLiteral("0"));
+        }
+        if (auto* hist = bottomPanel_->histogramPanel()) {
+            hist->clear();
+        }
+        wipeBoxes();
+        incRit(0);
+    }
+
+    emit runModeRequested(mode);
 }
 
 void MainWindow::wireBottomPanelClicks() {
-    // F1..F8 push buttons in BottomPanel emit clicked() with the same
-    // Sim::Message mapping as the Send menu items.
+    // F1..F8 push buttons → SendClick (same mapping as the Send menu).
     using mr::sim::Message;
     static constexpr Message kSendMap[8] = {
         Message::Cq,  Message::Nr,  Message::Tu,    Message::MyCall,
@@ -1041,7 +1260,7 @@ void MainWindow::wireBottomPanelClicks() {
         if (auto* btn = fKeyButton(i); btn != nullptr) {
             const Message m = kSendMap[i];
             connect(btn, &QPushButton::clicked, this,
-                    [this, m]() { emit sendMessageRequested(static_cast<int>(m)); });
+                    [this, m]() { sendMsg(static_cast<int>(m)); });
         }
     }
 }
@@ -1065,99 +1284,71 @@ void MainWindow::wireCheckBoxSync() {
 }
 
 void MainWindow::wireNumericSettings() {
-    // Right-panel SpinBoxes drive the wpmChanged / activityChanged /
-    // durationChanged signals; the matching Settings submenu items
-    // also emit the same signal and update the spin so the two views
-    // stay in sync. Pitch + Bandwidth go through QComboBox::activated
-    // (sends the data-payload Hz value).
+    // The right-panel controls are the single source of truth. Each
+    // drives its *Changed signal; the matching Settings submenu sets
+    // the control (so the change flows through that same signal) and
+    // mirrors the control's value back as a check mark.
     auto* rp = rightPanel_;
 
-    // WPM (SpinEdit1 + Settings > CW Speed)
-    connect(rp->wpmSpin(),
-            QOverload<int>::of(&QSpinBox::valueChanged),
-            this, &MainWindow::wpmChanged);
-    for (QAction* a : menus_->cwSpeedMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int wpm = a->data().toInt();
-            QSignalBlocker b(rp->wpmSpin());
-            rp->wpmSpin()->setValue(wpm);
-            emit wpmChanged(wpm);
-        });
-    }
+    // Spin-backed settings: WPM (SpinEdit1), Activity (SpinEdit3),
+    // Duration (SpinEdit2).
+    auto wireSpin = [this](QSpinBox* spin, QMenu* menu,
+                           void (MainWindow::*changed)(int)) {
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, changed);
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
+                menu, [menu](int v) { checkMatchingAction(menu, v); });
+        for (QAction* a : menu->actions()) {
+            connect(a, &QAction::triggered, spin,
+                    [a, spin]() { spin->setValue(a->data().toInt()); });
+        }
+        checkMatchingAction(menu, spin->value());
+    };
+    wireSpin(rp->wpmSpin(),      menus_->cwSpeedMenu,  &MainWindow::wpmChanged);
+    wireSpin(rp->activitySpin(), menus_->activityMenu, &MainWindow::activityChanged);
+    wireSpin(rp->durationSpin(), menus_->durationMenu, &MainWindow::durationChanged);
 
-    // Pitch (ComboBox1 + Settings > CW Pitch)
-    connect(rp->pitchCombo(),
-            QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, rp](int /*idx*/) {
-                emit pitchChanged(rp->pitchCombo()->currentData().toInt());
+    // Combo-backed settings: Pitch (ComboBox1), RX Bandwidth
+    // (ComboBox2). Item data carries the bare Hz value.
+    auto wireCombo = [this](QComboBox* combo, QMenu* menu,
+                            void (MainWindow::*changed)(int)) {
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this, combo, menu, changed](int /*idx*/) {
+                    const int hz = combo->currentData().toInt();
+                    checkMatchingAction(menu, hz);
+                    emit (this->*changed)(hz);
+                });
+        for (QAction* a : menu->actions()) {
+            connect(a, &QAction::triggered, combo, [a, combo]() {
+                if (const int i = combo->findData(a->data()); i >= 0) {
+                    combo->setCurrentIndex(i);
+                }
             });
-    for (QAction* a : menus_->cwPitchMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int hz = a->data().toInt();
-            const int idx = rp->pitchCombo()->findData(hz);
-            QSignalBlocker b(rp->pitchCombo());
-            if (idx >= 0) {
-                rp->pitchCombo()->setCurrentIndex(idx);
-            }
-            emit pitchChanged(hz);
-        });
-    }
-
-    // Bandwidth (ComboBox2 + Settings > CW Bandwidth)
-    connect(rp->bandwidthCombo(),
-            QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, rp](int /*idx*/) {
-                emit bandwidthChanged(rp->bandwidthCombo()->currentData().toInt());
-            });
-    for (QAction* a : menus_->cwBandwidthMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int hz = a->data().toInt();
-            const int idx = rp->bandwidthCombo()->findData(hz);
-            QSignalBlocker b(rp->bandwidthCombo());
-            if (idx >= 0) {
-                rp->bandwidthCombo()->setCurrentIndex(idx);
-            }
-            emit bandwidthChanged(hz);
-        });
-    }
-
-    // Activity (SpinEdit3 + Settings > Activity)
-    connect(rp->activitySpin(),
-            QOverload<int>::of(&QSpinBox::valueChanged),
-            this, &MainWindow::activityChanged);
-    for (QAction* a : menus_->activityMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int v = a->data().toInt();
-            QSignalBlocker b(rp->activitySpin());
-            rp->activitySpin()->setValue(v);
-            emit activityChanged(v);
-        });
-    }
-
-    // Duration (SpinEdit2 + Settings > Duration)
-    connect(rp->durationSpin(),
-            QOverload<int>::of(&QSpinBox::valueChanged),
-            this, &MainWindow::durationChanged);
-    for (QAction* a : menus_->durationMenu->actions()) {
-        connect(a, &QAction::triggered, this, [this, a, rp]() {
-            const int v = a->data().toInt();
-            QSignalBlocker b(rp->durationSpin());
-            rp->durationSpin()->setValue(v);
-            emit durationChanged(v);
-        });
-    }
+        }
+        checkMatchingAction(menu, combo->currentData().toInt());
+    };
+    wireCombo(rp->pitchCombo(),     menus_->cwPitchMenu,     &MainWindow::pitchChanged);
+    wireCombo(rp->bandwidthCombo(), menus_->cwBandwidthMenu, &MainWindow::bandwidthChanged);
 
     // Monitor level (VolumeSlider1). Pascal Mon. Level menu items map
     // discrete dB values; we apply via the slider's setDb() so the
-    // visual knob jumps and the slider's own change signal fires.
+    // visual knob jumps and the slider's own change signal fires. The
+    // slider is continuous, so the check mark only appears when it
+    // sits on one of the listed steps.
     if (auto* vs = rp->volumeSlider(); vs != nullptr) {
+        auto syncMonLevel = [this, vs]() {
+            checkMatchingAction(menus_->monLevelMenu,
+                                static_cast<int>(std::lround(vs->db())));
+        };
         connect(vs, &VolumeSlider::valueChanged,
                 this, &MainWindow::monitorLevelChanged);
+        connect(vs, &VolumeSlider::valueChanged, this, syncMonLevel);
         for (QAction* a : menus_->monLevelMenu->actions()) {
             connect(a, &QAction::triggered, this, [a, vs]() {
                 vs->setDb(static_cast<double>(a->data().toInt()));
             });
         }
+        syncMonLevel();
     }
 
     // MyCall (Edit4). Pascal: ecUpperCase + 12 chars; the RightPanel
@@ -1171,20 +1362,27 @@ void MainWindow::wireNumericSettings() {
         connect(rs, &RitSlider::ritChanged, this, &MainWindow::ritChanged);
     }
 
-    // Bottom-panel "Call" edit — the call the player believes the DX
-    // is sending. F5 (HisCall) reads this; pre-Phase-E.G4 we wire it
-    // here so F5 sends something audible as soon as the user types.
-    connect(bottomPanel_->callEdit(), &QLineEdit::textChanged,
-            this, &MainWindow::heardCallsignChanged);
+    // Pascal Edit1Change: an empty Call box clears NrSent; any edit is
+    // offered to the call being keyed (UpdateCallInMessage), and if it
+    // can't be applied, CallSent is cleared (onCallEditResult). An empty
+    // box can never be applied, so that case is decided here.
+    connect(bottomPanel_->callEdit(), &QLineEdit::textChanged, this,
+            [this](const QString& text) {
+                if (text.isEmpty()) {
+                    nrSent_ = false;
+                    callSent_ = false;
+                    return;
+                }
+                ++pendingCallEditResults_;
+                emit playerCallEdited(text);
+            });
 
-    // E.G4: Enter on any of the bottom-panel entry fields commits the
-    // QSO to the log pane and clears the row.
-    connect(bottomPanel_->callEdit(), &QLineEdit::returnPressed,
-            this, &MainWindow::onSaveQsoRequested);
-    connect(bottomPanel_->rstEdit(),  &QLineEdit::returnPressed,
-            this, &MainWindow::onSaveQsoRequested);
-    connect(bottomPanel_->nrEdit(),   &QLineEdit::returnPressed,
-            this, &MainWindow::onSaveQsoRequested);
+    // Pascal CheckBoxClick / CheckBox1Click: back to the Call box.
+    for (QCheckBox* cb : {rp->qskCheckBox(), rp->qrnCheckBox(), rp->qrmCheckBox(),
+                          rp->qsbCheckBox(), rp->flutterCheckBox(), rp->lidsCheckBox()}) {
+        connect(cb, &QCheckBox::clicked, this,
+                [this]() { bottomPanel_->callEdit()->setFocus(); });
+    }
 }
 
 }  // namespace mr::ui

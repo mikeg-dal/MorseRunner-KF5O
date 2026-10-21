@@ -45,9 +45,21 @@ public:
 
     // What the player station is doing.
     [[nodiscard]] virtual std::string_view myCallsign() const = 0;
-    // The callsign the player most recently keyed (their `HisCall`,
-    // i.e. what they think the DX called).
+    // The callsign the player most recently keyed (Pascal Tst.Me.HisCall).
+    // DX stations compare against what was *sent*, not what is currently
+    // typed in the Call field.
     [[nodiscard]] virtual std::string_view heardCallsign() const = 0;
+    // Pascal `Tst.Me.State = stSending`.
+    [[nodiscard]] virtual bool playerSending() const noexcept { return false; }
+    // Pascal Ini.CallsFromKeyer (INI-only): an external keyer sends the
+    // call, so MyStation keys a blank in its place (not in WPX / HST).
+    [[nodiscard]] virtual bool callsFromKeyer() const noexcept { return false; }
+
+    // Pascal TContest.OnMeStartedSending / OnMeFinishedSending. MyStation
+    // calls these synchronously, exactly where Pascal does, so stations
+    // see the player's transmission edges without block-boundary skew.
+    virtual void onPlayerStartedSending() {}
+    virtual void onPlayerFinishedSending() {}
     // The message set the player station most recently sent. DxOperator
     // inspects this to decide how to respond.
     [[nodiscard]] virtual const MessageSet& myLastMessage() const = 0;

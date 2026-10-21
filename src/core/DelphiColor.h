@@ -28,10 +28,10 @@ namespace mr::core {
 // can be cross-checked against the original screenshots in
 // docs/parity-checklist.md.
 namespace DfmColor {
-    inline constexpr std::uint32_t kLogBackgroundBgr   = 16711401u;  // RGB #E9FCFE — Shape1
-    inline constexpr std::uint32_t kRitIndicatorBgr    = 12902431u;  // RGB #DFCFC4 — Shape2
-    inline constexpr std::uint32_t kClockPanelFaceBgr  = 14151712u;  // RGB #E0D7D7 — Panel2 face
-    inline constexpr std::uint32_t kLogoShadowBgr      = 12369084u;  // RGB #BC9C5C — Label14 shadow
+    inline constexpr std::uint32_t kLogBackgroundBgr   = 16711401u;  // RGB #E9FEFE — Shape1
+    inline constexpr std::uint32_t kRitIndicatorBgr    = 12902431u;  // RGB #1FE0C4 — Shape2
+    inline constexpr std::uint32_t kClockTextBgr       = 14151712u;  // RGB #20F0D7 — Panel2 font
+    inline constexpr std::uint32_t kLogoShadowBgr      = 12369084u;  // RGB #BCBCBC — Label14 shadow
 }  // namespace DfmColor
 
 // Converts a non-system Delphi TColor literal to a QColor. Use this for any
