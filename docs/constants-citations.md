@@ -5,7 +5,10 @@ location in the original Delphi source. This table is the authoritative
 audit trail.
 
 The port preserves these values exactly to keep audio output and
-simulation behavior indistinguishable from the original.
+simulation behavior indistinguishable from the original. The Swift app
+uses the same values in `Swift/Sources/MRCore/Constants.swift` (grouped
+as `MathK`, `AudioK`, `DspK`, `SimK`, `ScoringK`), checked against the C++ build
+by the reference-data tests.
 
 | Constant | Value | Pascal origin | Reason |
 |---|---|---|---|

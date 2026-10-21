@@ -3,6 +3,11 @@
 Authoritative cross-reference. When a port file lands, add its row here so
 reviewers can grep for the Pascal origin.
 
+The shipped app is the Swift port. Its engine files mirror the C++ files
+listed here one to one, with the same names under `Swift/Sources/<Module>/`
+(for example `src/simulation/Contest.cpp` → `Swift/Sources/MRSimulation/Contest.swift`);
+the module table is in `Swift/PORTING.md`.
+
 | Pascal symbol | Pascal file | C++ port symbol | C++ port file |
 |---|---|---|---|
 | `TContest` / `Tst` | `Contest.pas` | `Sim::Contest` | `src/simulation/Contest.{h,cpp}` |

@@ -1,5 +1,9 @@
 # Parity checklist
 
+Every widget and behaviour of Morse Runner 1.68 (Main.dfm, Main.pas,
+Log.pas, Ini.pas) against the Swift/AppKit app. Rows marked "Swift app"
+describe where it deliberately differs.
+
 Status legend: ◯ pending, ◔ in progress, ● done, ◑ accepted platform delta.
 
 ## Window
@@ -11,7 +15,7 @@ Status legend: ◯ pending, ◔ in progress, ● done, ◑ accepted platform del
 | Position | Centered on desktop | ◯ |
 | Caption | "Morse Runner" (+ ":  <Name>" from INI) | ◯ |
 | KeyPreview | True (form-level shortcut handling) | ◯ |
-| Default font | MS Sans Serif 11pt → Helvetica 11pt | ◑ |
+| Default font | MS Sans Serif 11 px → macOS system font 11 pt (Delphi Font.Height px = pt on macOS) | ◑ |
 
 ## Right panel (Panel9, alRight 212×284)
 
@@ -23,7 +27,9 @@ Status legend: ◯ pending, ◔ in progress, ● done, ◑ accepted platform del
 | SpinEdit1 (WPM) | range 10..120, default 30. Swift app: typed text is applied once it is a value in range (TSpinEdit hands unclamped text to OnChange), clamped on exit | ◑ |
 | ComboBox1 (Pitch) | 300..900 Hz step 50, 13 items, default 600 Hz (idx 6) | ◯ |
 | ComboBox2 (RX BW) | 100..600 Hz step 50, 11 items, default 500 Hz (idx 8) | ◯ |
+| ComboBox1/2 width | Main.dfm 65 px; a small NSPopUpButton needs 78 px to show "900 Hz" untruncated, so both are 78 px | ◑ |
 | VolumeSlider1 (Mon Level) | value 0.75 ≡ −15 dB; every drag / menu / double-click goes through VolumeSlider1Change's `Db := 80*(Value−0.75)` remap (DbScale 60), hint '%.0f dB' ("-0 dB" as Delphi prints it); FromIni sets Value without the remap. Swift app persists the level on every change (Ini SelfMonVolume) | ● |
+| VolumeSlider1 drawing | VolmSldr.pas Paint geometry pixel for pixel; the wedge body is filled light grey because its white edges vanish on the lighter macOS group box (Windows drew it on grey clBtnFace) | ◑ |
 
 ### GroupBox3 "Band Conditions"
 | Control | Expected | Status |

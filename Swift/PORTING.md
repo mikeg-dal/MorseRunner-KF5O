@@ -1,6 +1,7 @@
 # Porting Morse Runner to Swift
 
-This package is a native Swift port of the C++ engine under `../src/`.
+This package is the shipped macOS app's engine and app logic. It is a
+native Swift port of the C++ engine under `../src/`.
 That engine is itself a line-by-line port of VE3NEA's Delphi Morse Runner
 v1.68 and is the **specification** for this one: the Swift code must
 behave identically, sample for sample.
